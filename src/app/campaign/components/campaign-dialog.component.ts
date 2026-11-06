@@ -10,6 +10,10 @@ import type { PlanItem } from '../core/script';
 import { availableContracts, fmt, period } from '../core/runner';
 import { unitAvailable } from '../core/track';
 import { CampaignStatusComponent } from './campaign-status.component';
+import { MarketPanelComponent } from './market-panel.component';
+import { PilotsPanelComponent } from './pilots-panel.component';
+import { RepairsPanelComponent } from './repairs-panel.component';
+import { SalvagePanelComponent } from './salvage-panel.component';
 import { TrackResultFormComponent } from './track-result-form.component';
 
 const SYSTEM_LABEL: Record<GameSystem, string> = { [GameSystem.CLASSIC]: 'Classic', [GameSystem.ALPHA_STRIKE]: 'Alpha Strike' };
@@ -18,7 +22,7 @@ const SYSTEM_LABEL: Record<GameSystem, string> = { [GameSystem.CLASSIC]: 'Classi
 @Component({
     selector: 'campaign-dialog',
     changeDetection: ChangeDetectionStrategy.OnPush,
-    imports: [CampaignStatusComponent, TrackResultFormComponent],
+    imports: [CampaignStatusComponent, MarketPanelComponent, PilotsPanelComponent, RepairsPanelComponent, SalvagePanelComponent, TrackResultFormComponent],
     host: { class: 'fullscreen-dialog-host nopadding fullheight tv-fade' },
     templateUrl: './campaign-dialog.component.html',
     styleUrls: ['./campaign.shared.scss', './campaign-dialog.component.scss'],
@@ -33,6 +37,10 @@ export class CampaignDialogComponent {
     protected readonly termLabel = TERM_LABEL;
     protected readonly stepLabel = stepLabel;
     protected readonly steps = Object.fromEntries(TERMS.map(t => [t, selectableSteps(t)])) as Record<TermKey, number[]>;
+
+    protected readonly tabs = ['Repairs', 'Pilots', 'Market', 'Salvage'] as const;
+    protected readonly tab = signal<(typeof this.tabs)[number]>('Repairs');
+    protected readonly search = (q: string) => this.svc.searchUnits(q, 10);
 
     protected readonly campaignName = signal('');
     protected readonly system = signal<GameSystem | ''>('');

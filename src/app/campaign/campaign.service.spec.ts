@@ -110,6 +110,7 @@ describe('CampaignService', () => {
         expect(units.map(u => u.unit?.name)).toEqual(['Wolverine WVR-6R', 'Locust LCT-1V']);
         expect(units[0].gunnery).toEqual(jasmine.any(Number));
         expect(units[0].piloting).toEqual(jasmine.any(Number));
+        expect(units.map(u => u.alias)).toEqual(svc.campaign()!.pilots.map(p => p.name));
     });
 
     it('runs months and closes the contract', async () => {
@@ -134,5 +135,143 @@ describe('CampaignService', () => {
         expect(svc.campaign()!.units.length).toBe(2);
         expect(svc.pub()!.title).toBe('Test publication');
         expect(saved.has(c.id)).toBeTrue();
+    });
+
+    // ---------- between tracks ----------
+
+    /** Signed contract and track n1 won: Locust armor damage, first pilot wounded twice, Atlas and Locust salvage. */
+    async function afterTrack() {
+        await started();
+        await svc.signContract('ct_glass', RAISED);
+        await svc.startTrack(svc.nextTrack()!, svc.campaign()!.units.map(u => u.id));
+        const c = svc.campaign()!;
+        const [p1] = c.pilots;
+        expect(await svc.applyTrack({
+            winner: 'A', tier: 'success', units: { [c.units[1].id]: { state: 'armor' } }, pilots: { [p1.id]: { wounds: 2 } },
+            salvage: [{ unit: 'Atlas AS7-D' }, { unit: 'Locust LCT-1V' }],
+        })).toBeTrue();
+        return svc.campaign()!;
+    }
+    const last = () => svc.campaign()!.ledger.at(-1)!;
+
+    it('repairs a damaged unit and refuses an operational one', async () => {
+        const c = await afterTrack();
+        const locust = c.units[1];
+        expect(await svc.repair(c.units[0].id)).toBeFalse();
+        expect(svc.campaign()).toBe(c);
+        expect(await svc.repair(locust.id)).toBeTrue();
+        const after = svc.campaign()!;
+        expect(after.units[1].state).toBe('ok');
+        expect(last().kind).toBe('repair');
+        // 20 t × 0.5 = 10 SP, Battle support covers none of a straight repair bill here.
+        expect(after.warchest).toBe(c.warchest + last().net);
+    });
+
+    it('reconfigures an Omni within its chassis', async () => {
+        await started();
+        await svc.addUnit('Timber Wolf Prime');
+        const tw = svc.campaign()!.units[2];
+        expect(svc.configsOf('Timber Wolf Prime').map(u => u.name)).toEqual(['Timber Wolf A']);
+        expect(await svc.reconfigure(tw.id, 'Atlas AS7-D')).toBeFalse();
+        expect(await svc.reconfigure(tw.id, 'Timber Wolf A')).toBeTrue();
+        expect(svc.campaign()!.units[2].unit).toBe('Timber Wolf A');
+    });
+
+    it('heals within the between-track limit and invests SP', async () => {
+        const c = await afterTrack();
+        const p1 = c.pilots[0];
+        expect(p1.wounds).toBe(2);
+        expect(await svc.heal(p1.id)).toBeTrue();
+        expect(svc.campaign()!.pilots[0].wounds).toBe(1);
+        expect(last().kind).toBe('heal');
+        expect(await svc.heal(p1.id)).toBeFalse();
+        expect(svc.campaign()!.pilots[0].wounds).toBe(1);
+
+        const unspent = svc.campaign()!.pilots[0].unspent;
+        expect(await svc.investSp(p1.id, 'piloting', unspent + 1)).toBeFalse();
+        expect(await svc.investSp(p1.id, 'piloting', 100)).toBeTrue();
+        expect(svc.campaign()!.pilots[0].cols.piloting).toBe(100);
+        expect(svc.campaign()!.pilots[0].unspent).toBe(unspent - 100);
+    });
+
+    it('hires pilots and crews and trains a command ability in a track-less month', async () => {
+        const c = await started();
+        expect(await svc.hire({ kind: 'named', name: 'New Hire' })).toBeTrue();
+        expect(svc.campaign()!.pilots.at(-1)!.name).toBe('New Hire');
+        expect(svc.campaign()!.warchest).toBe(c.warchest - 150);
+        await svc.addUnit('Atlas AS7-D');
+        const atlas = svc.campaign()!.units[2];
+        expect(await svc.hire({ kind: 'green', cuId: atlas.id })).toBeTrue();
+        expect(svc.campaign()!.units[2].crew.kind).toBe('green');
+        expect(await svc.trainSca(c.pilots[0].id, 'Test Ability')).toBeTrue();
+        expect(svc.campaign()!.pilots[0].scas).toEqual(['Test Ability']);
+        expect(last().kind).toBe('training');
+    });
+
+    it('buys and sells units at MekBay values', async () => {
+        await started();
+        await svc.signContract('ct_glass', RAISED);
+        const w0 = svc.campaign()!.warchest;
+        expect(await svc.addUnit('Atlas AS7-D')).toBeTrue();
+        expect(svc.campaign()!.warchest).toBe(w0 - 1900);
+        const atlas = svc.campaign()!.units.at(-1)!;
+        expect(await svc.removeUnit(atlas.id)).toBeTrue();
+        expect(svc.campaign()!.warchest).toBe(w0 - 1900 + 950);
+        expect(svc.campaign()!.ledger.slice(-2).map(e => e.kind)).toEqual(['purchase', 'sale']);
+    });
+
+    it('orders through a sponsor and blocks in-scope purchases elsewhere', async () => {
+        await started();
+        await svc.signContract('ct_glass', RAISED);
+        expect(await svc.setSponsor('sp_works')).toBeTrue();
+        expect(await svc.addUnit('Manticore Heavy Tank')).toBeFalse();
+        expect(svc.error()).toContain('Test Works');
+        expect(await svc.orderFromSponsor('Manticore Heavy Tank', 'territory')).toBeTrue();
+        const tank = svc.campaign()!.units.at(-1)!;
+        expect(tank.delivery?.due).toBeTruthy();
+        expect(last().cost).toBe(900);
+        expect(await svc.setSponsor('')).toBeTrue();
+        expect(svc.campaign()!.sponsorBanned).toEqual(['sp_works']);
+        expect(svc.campaign()!.units.some(u => u.id === tank.id)).toBeFalse();
+    });
+
+    it('rolls contract purchase availability and the purchase table', async () => {
+        await started();
+        await svc.signContract('ct_glass', RAISED);
+        expect(await svc.rollPurchaseTable()).toBeFalse();
+        expect(await svc.rollPurchaseGate()).toBeTrue();
+        expect(await svc.rollPurchaseGate()).toBeFalse();
+        expect(await svc.rollPurchaseTable()).toBeTrue();
+        const st = Object.values(svc.campaign()!.contract!.purchase!)[0];
+        expect(st.count).toBe(1);
+        expect(st.logs[0].flatMap(l => l.units ?? []).map(u => u.unit)).toEqual(['Phoenix Hawk PXH-1']);
+        expect(await svc.rollPurchaseTable()).toBeFalse();
+        expect(await svc.addUnit('Phoenix Hawk PXH-1', { source: 'contract' })).toBeTrue();
+        expect(svc.campaign()!.units.at(-1)!.source).toBe('contract');
+    });
+
+    it('searches the scrapyard once a month and buys the find', async () => {
+        await started();
+        await svc.signContract('ct_glass', RAISED);
+        expect(await svc.searchScrapyard('tb_scrap')).toBeTrue();
+        expect(svc.campaign()!.scrapyard!.unit).toBe('Locust LCT-1V');
+        expect(await svc.searchScrapyard('tb_scrap')).toBeFalse();
+        expect(await svc.buyScrapyard()).toBeTrue();
+        const cu = svc.campaign()!.units.at(-1)!;
+        expect(cu.source).toBe('scrapyard');
+        expect(last().cost).toBe(215);
+        expect(await svc.buyScrapyard()).toBeFalse();
+    });
+
+    it('keeps or declines salvage from the pool', async () => {
+        const c = await afterTrack();
+        const [atlas, locust] = c.contract!.salvagePool;
+        expect(await svc.buySalvage(atlas.id)).toBeTrue();
+        const after = svc.campaign()!;
+        expect(after.units.at(-1)!.unit).toBe('Atlas AS7-D');
+        expect(after.units.at(-1)!.state).toBe('destroyed');
+        expect(after.warchest).toBe(c.warchest - 950);
+        expect(await svc.declineSalvage(locust.id)).toBeTrue();
+        expect(svc.campaign()!.contract!.salvagePool).toEqual([]);
     });
 });

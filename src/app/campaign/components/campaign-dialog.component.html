@@ -157,6 +157,39 @@
                             }
                         }
                     }
+
+                    @if (!c.setup && !c.draft && svc.env(); as env) {
+                        <section class="cp-card">
+                            <h3>Between tracks</h3>
+                            <div class="cp-row" role="tablist">
+                                @for (t of tabs; track t) {
+                                    <button type="button" role="tab" class="bt-button tiny" [class.selected]="tab() === t" [attr.aria-selected]="tab() === t" (click)="tab.set(t)">{{ t }}</button>
+                                }
+                            </div>
+                            @switch (tab()) {
+                                @case ('Repairs') {
+                                    <repairs-panel [campaign]="c" [env]="env" [labelOf]="svc.unitLabel" [configsOf]="svc.configsOf"
+                                        (repair)="svc.repair($event)" (reconfigure)="$event.unit && svc.reconfigure($event.cuId, $event.unit)" />
+                                }
+                                @case ('Pilots') {
+                                    <pilots-panel [campaign]="c" [env]="env" [labelOf]="svc.unitLabel"
+                                        (heal)="svc.heal($event)" (invest)="svc.investSp($event.pilotId, $event.col, $event.amount)"
+                                        (trainSca)="svc.trainSca($event.pilotId, $event.name)" (trainFormation)="svc.trainFormation($event.pilotId, $event.formation)"
+                                        (hire)="svc.hire($event)" />
+                                }
+                                @case ('Market') {
+                                    <market-panel [campaign]="c" [env]="env" [labelOf]="svc.unitLabel" [search]="search"
+                                        (buy)="svc.addUnit($event.unit, { breakDeal: $event.breakDeal, source: $event.source })" (sell)="svc.removeUnit($event)"
+                                        (rollGate)="svc.rollPurchaseGate()" (rollTable)="svc.rollPurchaseTable()"
+                                        (searchScrapyard)="svc.searchScrapyard($event)" (buyScrapyard)="svc.buyScrapyard($event)"
+                                        (setSponsor)="svc.setSponsor($event)" (order)="svc.orderFromSponsor($event.unit, $event.zone)" (collect)="svc.collectDelivery($event)" />
+                                }
+                                @case ('Salvage') {
+                                    <salvage-panel [campaign]="c" [labelOf]="svc.unitLabel" (buy)="svc.buySalvage($event)" (decline)="svc.declineSalvage($event)" />
+                                }
+                            }
+                        </section>
+                    }
                 </div>
                 <campaign-status class="cp-side" [campaign]="c" [labelOf]="svc.unitLabel" (assignPilot)="svc.assignPilot($event.cuId, $event.pilotId)" (removeUnit)="svc.removeUnit($event)" />
             </div>

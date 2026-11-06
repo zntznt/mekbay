@@ -8,7 +8,14 @@ import { ForceBuilderService } from '../services/force-builder.service';
 import { CampaignStorageService, parseCampaignSave, type CampaignSave, type CampaignSummary } from './campaign-storage.service';
 import type { Campaign, RunnerEnv, TrackResult } from './core/campaign.model';
 import type { Terms } from './core/engine';
-import { buyUnit, sellUnit } from './core/market';
+import {
+    breakSponsor, buyFromSponsor, buySalvage, buyScrapyard, buyUnit, collectDelivery, healPilot, hirePilot, joinSponsor, reconfigure,
+    repairUnit, rollPurchaseGate, rollPurchaseTable, scrapyardRoll, sellUnit, trainFormation, trainSca,
+    type BuyOptions, type DeliveryZone, type HireInput,
+} from './core/market';
+import { investSp } from './core/pilots';
+import { tableRoller } from './core/roller';
+import type { LadderColumn } from './core/rules';
 import { migratePublication, type Publication } from './core/publication.model';
 import {
     acceptContract, beginMonth, campaignChecks, closeContract, endMonth, evaluateVictory, migrateCampaign, newCampaign, waitMonth,
@@ -183,7 +190,13 @@ export class CampaignService {
 
     // ---------- actions ----------
 
-    addUnit(name: string) { return this.act((c, env) => void buyUnit(c, env, name)); }
+    /** Other configurations of a unit's chassis (Omni reconfiguration). */
+    readonly configsOf = (name: string): { name: string; label: string }[] => {
+        const chassis = this.data.getUnitByName(name)?.chassis;
+        return chassis ? this.data.getUnits().filter(u => u.chassis === chassis && u.name !== name).map(u => ({ name: u.name, label: `${u.chassis} ${u.model}`.trim() })) : [];
+    };
+
+    addUnit(name: string, opts?: BuyOptions) { return this.act((c, env) => void buyUnit(c, env, name, opts)); }
     removeUnit(cuId: string) { return this.act((c, env) => void sellUnit(c, env, cuId)); }
     assignPilot(cuId: string, pilotId: string) {
         return this.act(c => {
@@ -238,12 +251,36 @@ export class CampaignService {
             type: c.draft.system,
             groups: f.groups.map(g => ({
                 name: g.name,
-                units: g.units.map(u => ({ unit: this.data.getUnitByName(u.unit), destroyed: false, gunnery: u.g, piloting: u.p, skill: u.skill })),
+                units: g.units.map(u => ({ unit: this.data.getUnitByName(u.unit), alias: u.alias, destroyed: false, gunnery: u.g, piloting: u.p, skill: u.skill })),
             })),
         });
         const created = await this.injector.get(ForceBuilderService).createGeneratedForce(entry);
         return created ? true : this.fail('Could not load the force.');
     }
+
+    // ---------- between tracks ----------
+
+    repair(cuId: string) { return this.act((c, env) => void repairUnit(c, env, cuId)); }
+    reconfigure(cuId: string, unit: string) { return this.act((c, env) => reconfigure(c, env, cuId, unit)); }
+    heal(pilotId: string) { return this.act((c, env) => healPilot(c, env, pilotId)); }
+    investSp(pilotId: string, col: LadderColumn, amount: number) { return this.act(c => investSp(c, pilotId, col, amount)); }
+    hire(input: HireInput) { return this.act((c, env) => void hirePilot(c, env, input)); }
+    trainSca(pilotId: string, name: string) { return this.act((c, env) => trainSca(c, env, pilotId, name)); }
+    trainFormation(pilotId: string, formation: string) { return this.act((c, env) => trainFormation(c, env, pilotId, formation)); }
+    buySalvage(svId: string) { return this.act(c => void buySalvage(c, svId)); }
+    declineSalvage(svId: string) {
+        return this.act(c => {
+            if (c.contract) c.contract.salvagePool = c.contract.salvagePool.filter(s => s.id !== svId);
+        });
+    }
+    searchScrapyard(tableId: string) { return this.act((c, env) => void scrapyardRoll(c, env, tableId, tableRoller(env.rng))); }
+    buyScrapyard(breakDeal = false) { return this.act((c, env) => void buyScrapyard(c, env, { breakDeal })); }
+    rollPurchaseGate() { return this.act((c, env) => void rollPurchaseGate(c, env)); }
+    rollPurchaseTable() { return this.act((c, env) => void rollPurchaseTable(c, env, tableRoller(env.rng))); }
+    /** Join a sponsor; an empty id ends the current sponsorship for good. */
+    setSponsor(id: string) { return this.act((c, env) => (id ? joinSponsor(c, env, id) : breakSponsor(c, env, 'ended by the command'))); }
+    orderFromSponsor(unit: string, zone: DeliveryZone) { return this.act((c, env) => void buyFromSponsor(c, env, unit, zone)); }
+    collectDelivery(cuId: string) { return this.act(c => collectDelivery(c, cuId)); }
 
     // ---------- plumbing ----------
 

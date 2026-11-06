@@ -141,7 +141,8 @@ const isNamedCrew = (x: CrewInfo): x is Extract<CrewInfo, { kind: 'named' | 'hir
 /** Unit list per group, for loading the force into MekBay. */
 export interface ForceGroup {
     name: string;
-    units: { unit: string; g: number; p: number; skill: number }[];
+    /** `alias` is the pilot's name for named pilots and temporary hires. */
+    units: { unit: string; g: number; p: number; skill: number; alias?: string }[];
 }
 
 /** Validate a track force and work out the BSP budget. */
@@ -214,7 +215,8 @@ export function trackForce(c: Campaign, env: RunnerEnv, d: TrackDraft) {
         name: c.name,
         units: crews.filter(x => x.crew.pilot).map(x => {
             const s = pilotStats(x.crew.pilot!, system, c.system);
-            return { unit: x.cu.unit, g: s.g, p: s.p, skill: s.skill };
+            const alias = isNamedCrew(x.crew) ? x.crew.pilot.name : undefined;
+            return { unit: x.cu.unit, g: s.g, p: s.p, skill: s.skill, ...(alias ? { alias } : {}) };
         }),
     }];
     if (granted.length) groups.push({ name: 'Granted', units: granted.map(cu => ({ unit: cu.unit, g: cu.crew?.g ?? 4, p: cu.crew?.p ?? 5, skill: cu.crew?.skill ?? 4 })) });

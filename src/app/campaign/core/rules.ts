@@ -84,6 +84,8 @@ export interface SystemRules {
     readonly system: GameSystem;
     /** Unit value basis: Battle Value or Point Value. */
     readonly valueLabel: 'BV' | 'PV';
+    /** Ladder columns a pilot invests SP in under this system. */
+    readonly ladderColumns: readonly LadderColumn[];
     unitValue(u: CampaignUnitData | undefined): number;
     purchasePrice(u: CampaignUnitData | undefined): number;
     sellingPrice(u: CampaignUnitData | undefined): number;
@@ -149,6 +151,7 @@ const tonnageRepair = (u: CampaignUnitData, level: RepairLevel): RepairBase => {
 export const CLASSIC_RULES: SystemRules = {
     system: GameSystem.CLASSIC,
     valueLabel: 'BV',
+    ladderColumns: ['gunnery', 'piloting', 'edge', 'edgeAbilities'],
     unitValue: u => (u ? u.bv : 0),
     purchasePrice: u => (u ? u.bv : 0),
     sellingPrice: u => (u ? Math.floor(u.bv / 2) : 0),
@@ -177,6 +180,7 @@ export const CLASSIC_RULES: SystemRules = {
 export const ALPHA_STRIKE_RULES: SystemRules = {
     system: GameSystem.ALPHA_STRIKE,
     valueLabel: 'PV',
+    ladderColumns: ['asSkill', 'edge', 'edgeAbilities'],
     unitValue: u => (u ? u.as.PV : 0),
     purchasePrice: u => (u ? u.as.PV * 40 : 0),
     sellingPrice: u => (u ? u.as.PV * 20 : 0),

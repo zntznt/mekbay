@@ -121,6 +121,11 @@ describe('campaign runner: tracks', () => {
         expect(f.total).toBe(1530);
         // 32 free BSP plus 1,470 unused BV / 20, capped at 32.
         expect(f.bsp).toEqual(jasmine.objectContaining({ base: 32, conv: 32, total: 64 }));
+        // Named pilots carry their names into the MekBay force; regular crews stay unnamed.
+        expect(f.groups[0].units.map(u => u.alias)).toEqual(c.pilots.map(p => p.name));
+        c.units[1].pilotId = '';
+        expect(trackForce(c, env, d).groups[0].units[1].alias).toBeUndefined();
+        c.units[1].pilotId = c.pilots[1].id;
 
         const [p1, p2] = c.pilots;
         const locust = unitId(c, 'Locust LCT-1V');

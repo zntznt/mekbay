@@ -100,5 +100,10 @@ export class CampaignStatusComponent {
     protected readonly step = stepLabel;
     protected readonly activePilots = computed(() => this.campaign().pilots.filter(p => p.status === 'active'));
     /** Newest first. */
-    protected readonly ledger = computed(() => [...this.campaign().ledger].reverse());
+    // ponytail: core writes MekBay unit ids (e.g. BMLocust_LCT1V) into ledger text; ids carry
+    // an underscore, so relabel those tokens here instead of giving core a unit lookup.
+    protected readonly ledger = computed(() => {
+        const label = this.labelOf();
+        return [...this.campaign().ledger].reverse().map(e => ({ ...e, event: e.event.replace(/\b[A-Za-z][\w-]*_[\w-]+/g, t => label(t)) }));
+    });
 }

@@ -78,6 +78,15 @@ export function makePublication(): Publication {
             { id: 's_pay', label: 'Pay', tableId: pay.id, assign: 'basePay', shifts: [{ from: 's_type', tag: 'garrison', add: -1 }] },
         ],
     });
+
+    // Between-track market: a contract purchase table, a scrapyard, a vehicle sponsor and one command ability.
+    const units = (unit: string) => [{ min: 1, max: 6, cells: { r: { kind: 'units' as const, units: [{ unit }] } } }];
+    const market = { ...newTable(), id: 'tb_market', name: 'Harbor market', purpose: 'purchase', die: '1D6', rows: units('Phoenix Hawk PXH-1') };
+    const scrap = { ...newTable(), id: 'tb_scrap', name: 'Harbor scrapyard', purpose: 'scrapyard', die: '1D6', rows: units('Locust LCT-1V') };
+    pub.tables.push(market, scrap);
+    ct.purchase = { tableId: market.id, gateDie: '2D6', gate: [{ min: 2, count: 1 }], freq: 'month', note: '' };
+    pub.sponsors.push({ id: 'sp_works', name: 'Test Works', scope: ['Vehicle'], discountPct: 10, deliveryInTerritory: 1, deliveryNear: 2, nearJumps: 3, purchaseTableId: '' });
+    pub.scas.push({ id: 'sca_test', name: 'Test Ability' });
     return pub;
 }
 
