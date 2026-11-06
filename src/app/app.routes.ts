@@ -42,6 +42,11 @@ export const routes: Routes = [
         canActivate: [dataReadyGuard],
         loadComponent: () => import('./pages/collection-page.component').then(m => m.CollectionPageComponent),
     },
+    {
+        path: 'campaign',
+        canActivate: [dataReadyGuard],
+        loadComponent: () => import('./campaign/campaign-page.component').then(m => m.CampaignPageComponent),
+    },
     { path: '', pathMatch: 'full', children: [] },
     { path: '**', redirectTo: '' },
 ];

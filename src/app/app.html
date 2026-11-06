@@ -48,6 +48,10 @@
                             </svg>
                             <span class="home-action-label">Collection</span>
                         </button>
+                        <a class="home-button home-action-button" routerLink="/campaign" queryParamsHandling="preserve" aria-label="Campaign">
+                            <svg fill="currentColor" width="32px" height="32px" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 2h2v20H4zM7 3h13l-3 5 3 5H7z" /></svg>
+                            <span class="home-action-label">Campaign</span>
+                        </a>
                         <button type="button" class="home-button home-action-button" (click)="showOptionsDialog()" aria-label="Options">
                             <div class="update-marker-anchor">
                                 <svg fill="currentColor" width="32px" height="32px" viewBox="0 0 1920 1920" xmlns="http://www.w3.org/2000/svg">
@@ -94,6 +98,10 @@
                                 <path d="M199.173,0H104.65L0,104.651v94.523l273.442,273.442l199.173-199.173L199.173,0z M168.539,168.54 c-15.397,15.397-40.361,15.397-55.759,0c-15.397-15.397-15.397-40.362,0-55.76c15.396-15.397,40.361-15.397,55.759,0 C183.936,128.177,183.936,153.142,168.539,168.54z" />
                             </svg>
                             <span>Collection Manager</span>
+                        </button>
+                        <button type="button" class="home-panel-action" routerLink="/campaign" queryParamsHandling="preserve" (click)="closeHomeActionsPanel()">
+                            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 2h2v20H4zM7 3h13l-3 5 3 5H7z" /></svg>
+                            <span>Campaign</span>
                         </button>
                         <button type="button" class="home-panel-action" (click)="showOptionsDialog(); closeHomeActionsPanel()">
                             <div class="update-marker-anchor">

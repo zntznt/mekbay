@@ -1,0 +1,213 @@
+<div class="campaign-dialog">
+    <header class="cp-header">
+        <h2>Campaign @if (svc.campaign(); as c) { <small>{{ c.name }} · {{ c.pubTitle }}</small> }</h2>
+        <div class="cp-row">
+            @if (svc.campaign()) {
+                <button type="button" class="bt-button" (click)="exportSave()">Export save</button>
+                <button type="button" class="bt-button" (click)="svc.close()">Campaign list</button>
+            }
+            <button type="button" class="header-icon-button" (click)="close()" aria-label="Dismiss" title="Dismiss">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M18 6L6 18" />
+                    <path d="M6 6L18 18" />
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    @if (svc.error()) { <div class="cp-card cp-danger cp-error" role="alert">{{ svc.error() }}</div> }
+
+    <div class="cp-body">
+        @if (svc.campaign(); as c) {
+            <div class="cp-columns">
+                <div class="cp-main">
+                    @if (svc.checks().length) {
+                        <section class="cp-card">
+                            <ul class="cp-list">
+                                @for (x of svc.checks(); track $index) { <li [class.cp-danger]="x.level === 'error'" [class.cp-warn]="x.level === 'warn'">{{ x.msg }}</li> }
+                            </ul>
+                        </section>
+                    }
+
+                    @if (c.setup) {
+                        <section class="cp-card">
+                            <h3>Starting force</h3>
+                            <label class="cp-block">Add MekBay unit
+                                <input class="bt-input" type="search" placeholder="Chassis or model" [value]="unitQuery()" (input)="unitQuery.set($any($event.target).value)">
+                            </label>
+                            <div class="cp-row">
+                                @for (n of suggestions(); track n.name) { <button type="button" class="bt-button tiny" (click)="addUnit(n.name)">{{ n.label }}</button> }
+                            </div>
+                        </section>
+                    }
+
+                    @if (!c.contract) {
+                        <section class="cp-card">
+                            <h3>Contracts</h3>
+                            <table class="cp-table">
+                                <thead><tr><th>Contract</th><th>Employer</th><th>Months</th><th></th></tr></thead>
+                                <tbody>
+                                    @for (x of contracts(); track x.ct.id) {
+                                        <tr [class.cp-muted]="!x.open || !x.allowed">
+                                            <td>{{ x.ct.number ? x.ct.number + ' ' : '' }}{{ x.ct.name }}</td>
+                                            <td>{{ x.ct.employer }}</td>
+                                            <td>{{ x.ct.length }}</td>
+                                            <td><button type="button" class="bt-button tiny" [class.selected]="contractId() === x.ct.id" (click)="pickContract(x.ct.id)">Terms</button></td>
+                                        </tr>
+                                    } @empty { <tr><td colspan="4">The publication has no contracts.</td></tr> }
+                                </tbody>
+                            </table>
+                            @if (terms(); as t) {
+                                <div class="cp-grid">
+                                    @for (k of termKeys; track k) {
+                                        <label>{{ termLabel[k] }}
+                                            <select class="bt-select" (change)="setTerm(k, $any($event.target).value)">
+                                                @for (s of steps[k]; track s) { <option [value]="s" [selected]="s === t[k]">{{ stepLabel(k, s) }}</option> }
+                                            </select>
+                                        </label>
+                                    }
+                                </div>
+                                <button type="button" class="bt-button" (click)="sign()">Sign contract</button>
+                            }
+                        </section>
+                        <div class="cp-row">
+                            <button type="button" class="bt-button" (click)="svc.endMonth()">Wait a month</button>
+                        </div>
+                    } @else if (c.contract.status === 'ended') {
+                        <section class="cp-card">
+                            <h3>Contract ended</h3>
+                            @if (svc.victory(); as v) {
+                                <ul class="cp-list">
+                                    @for (x of v.conds; track $index) { <li>{{ x.text }}: {{ x.auto === null ? 'your call' : x.auto ? 'met' : 'not met' }}</li> }
+                                </ul>
+                                <div class="cp-row">
+                                    <button type="button" class="bt-button" [class.selected]="v.suggested" (click)="svc.closeContract(true)">Close as victory</button>
+                                    <button type="button" class="bt-button" [class.selected]="!v.suggested" (click)="svc.closeContract(false)">Close as defeat</button>
+                                </div>
+                            }
+                        </section>
+                    } @else {
+                        <section class="cp-card">
+                            <h3>Month {{ c.contract.month }}</h3>
+                            @if (svc.plan(); as plan) {
+                                <ul class="cp-list">
+                                    @for (n of plan.notes; track $index) { <li class="cp-muted">{{ n }}</li> }
+                                    @for (it of plan.items; track it.key) {
+                                        <li>{{ it.label || trackName(it.trackId) }}@if (it.optional) { <small> (optional)</small> } — {{ it.done ? 'won by ' + it.winner : 'to play' }}</li>
+                                    }
+                                </ul>
+                                @if (plan.waiting; as w) {
+                                    @switch (w.type) {
+                                        @case ('random') { <button type="button" class="bt-button" (click)="svc.rollRandom()">Roll random track</button> }
+                                        @case ('choice') {
+                                            <div class="cp-row">
+                                                @for (o of w.node.options; track $index) { <button type="button" class="bt-button" (click)="svc.choose(w.key, $index)">{{ o.label || 'Option ' + ($index + 1) }}</button> }
+                                            </div>
+                                        }
+                                        @case ('loop') {
+                                            <div class="cp-row">
+                                                <button type="button" class="bt-button" (click)="svc.loop(w.key, true)">Repeat</button>
+                                                <button type="button" class="bt-button" (click)="svc.loop(w.key, false)">Move on</button>
+                                            </div>
+                                        }
+                                    }
+                                }
+                            }
+                            <div class="cp-row">
+                                @if (monthPending()) { <button type="button" class="bt-button" (click)="svc.beginMonth()">Begin month</button> }
+                                @if (!c.draft && svc.nextTrack(); as next) {
+                                    <button type="button" class="bt-button" (click)="setupTrack(next)">Set up track</button>
+                                }
+                                @if (!c.draft) { <button type="button" class="bt-button" (click)="svc.endMonth()">End month</button> }
+                            </div>
+                        </section>
+
+                        @if (c.draft; as d) {
+                            <section class="cp-card">
+                                <h3>{{ d.name }} <small>Scale {{ d.scale }}</small></h3>
+                                <table class="cp-table">
+                                    <tbody>
+                                        @for (u of trackUnits(); track u.id) {
+                                            <tr>
+                                                <td><label><input type="checkbox" [checked]="u.picked" (change)="toggleUnit(u.id, $any($event.target).checked)"> {{ u.label }}</label></td>
+                                                <td class="cp-muted">{{ u.why }}</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                                @if (svc.force(); as f) {
+                                    <div class="cp-stats">
+                                        <div><span class="cp-label">Force</span>{{ fmt(f.total) }} / {{ fmt(f.limit) }}</div>
+                                        <div><span class="cp-label">Units</span>{{ f.units }}</div>
+                                        <div><span class="cp-label">BSP</span>{{ f.bsp.total }}</div>
+                                        @if (f.bsp.oppExtra) { <div><span class="cp-label">Opponent BSP</span>+{{ f.bsp.oppExtra }}</div> }
+                                    </div>
+                                    <ul class="cp-list">
+                                        @for (e of f.errors; track $index) { <li class="cp-danger">{{ e }}</li> }
+                                        @for (w of f.warns; track $index) { <li class="cp-warn">{{ w }}</li> }
+                                    </ul>
+                                    <div class="cp-row">
+                                        <button type="button" class="bt-button" [disabled]="!f.crews.length" (click)="loadInMekBay()">Load force in MekBay</button>
+                                        <button type="button" class="bt-button" (click)="svc.cancelTrack()">Cancel track</button>
+                                    </div>
+                                }
+                            </section>
+                            @if (svc.force(); as f) {
+                                @if (f.ok) { <track-result-form [force]="f" [labelOf]="svc.unitLabel" [side]="c.contract.side" (apply)="applyResult($event)" /> }
+                            }
+                        }
+                    }
+                </div>
+                <campaign-status class="cp-side" [campaign]="c" [labelOf]="svc.unitLabel" (assignPilot)="svc.assignPilot($event.cuId, $event.pilotId)" (removeUnit)="svc.removeUnit($event)" />
+            </div>
+        } @else {
+            <section class="cp-card">
+                <h3>Saved campaigns</h3>
+                <table class="cp-table">
+                    <tbody>
+                        @for (s of svc.saves(); track s.id) {
+                            <tr>
+                                <td>{{ s.name }}</td><td>{{ s.pubTitle }}</td><td>{{ s.date }}</td>
+                                <td>
+                                    <div class="cp-row">
+                                        <button type="button" class="bt-button tiny" (click)="svc.open(s.id)">Open</button>
+                                        <button type="button" class="bt-button tiny" (click)="removeSave(s.id)">Delete</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        } @empty { <tr><td>None yet.</td></tr> }
+                    </tbody>
+                </table>
+                <label class="cp-block">Import campaign save
+                    <input type="file" accept=".json,application/json" (change)="onSaveFile($event)">
+                </label>
+            </section>
+
+            <section class="cp-card">
+                <h3>New campaign</h3>
+                <label class="cp-block">Publication (JSON)
+                    <input type="file" accept=".json,application/json" (change)="onPublicationFile($event)">
+                </label>
+                @if (svc.pub(); as pub) {
+                    <p>{{ pub.title }} <small class="cp-muted">{{ pub.contracts.length }} contracts · {{ pub.calendar.start }} to {{ pub.calendar.end }}</small></p>
+                    @if (svc.issues().length) {
+                        <ul class="cp-list">
+                            @for (i of svc.issues(); track $index) {
+                                <li [class.cp-danger]="i.level === 'error'" [class.cp-warn]="i.level === 'warn'" [class.cp-muted]="i.level === 'info'">{{ i.coll }} {{ i.id }}: {{ i.msg }}</li>
+                            }
+                        </ul>
+                    }
+                    <div class="cp-grid">
+                        <label>Name <input class="bt-input" type="text" placeholder="New mercenary command" [value]="campaignName()" (input)="campaignName.set($any($event.target).value)"></label>
+                        <label>Game system
+                            <select class="bt-select" (change)="system.set($any($event.target).value)">
+                                @for (s of pub.systems; track s) { <option [value]="s" [selected]="s === system()">{{ systemLabel[s] }}</option> }
+                            </select>
+                        </label>
+                    </div>
+                    <button type="button" class="bt-button" [disabled]="svc.pubErrors().length > 0" (click)="start()">Start campaign</button>
+                }
+            </section>
+        }
+    </div>
+</div>
