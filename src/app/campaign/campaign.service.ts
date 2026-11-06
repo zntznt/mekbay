@@ -9,7 +9,7 @@ import { CampaignStorageService, parseCampaignSave, type CampaignSave, type Camp
 import type { Campaign, RunnerEnv, TrackResult } from './core/campaign.model';
 import type { Terms } from './core/engine';
 import {
-    breakSponsor, buyFromSponsor, buySalvage, buyScrapyard, buyUnit, collectDelivery, healPilot, hirePilot, joinSponsor, reconfigure,
+    breakSponsor, buyFromSponsor, buySalvage, buyScrapyard, buyUnit, collectDelivery, goToHall, healPilot, hirePilot, joinSponsor, reconfigure,
     repairUnit, rollPurchaseGate, rollPurchaseTable, scrapyardRoll, sellUnit, trainFormation, trainSca,
     type BuyOptions, type DeliveryZone, type HireInput,
 } from './core/market';
@@ -21,7 +21,7 @@ import {
     acceptContract, beginMonth, campaignChecks, closeContract, endMonth, evaluateVictory, migrateCampaign, newCampaign, waitMonth,
 } from './core/runner';
 import { loopDecision, makeChoice, monthPlan, nextItem, rollRandomNode, type PlanItem } from './core/script';
-import { applyTrack, cancelTrack, startTrack, trackForce } from './core/track';
+import { applyTrack, cancelTrack, rollComplications, startTrack, trackForce } from './core/track';
 import type { UnitLookup } from './core/units';
 import { validate, type Issue } from './core/validate';
 
@@ -225,6 +225,13 @@ export class CampaignService {
             fieldUnits(c, unitIds);
         });
     }
+    /** Roll this track's events (command complications, world table); effects apply with the result. */
+    rollEvents() {
+        return this.act((c, env) => {
+            if (!c.draft) throw new Error('Set up a track first.');
+            if (!rollComplications(c, env, c.draft, tableRoller(env.rng))) throw new Error('This contract has no track events to roll.');
+        });
+    }
     setTrackUnits(unitIds: string[]) { return this.act(c => fieldUnits(c, unitIds)); }
     cancelTrack() { return this.act(c => cancelTrack(c)); }
     /** Apply a track result; salvage may name units by "Chassis Model". */
@@ -280,6 +287,7 @@ export class CampaignService {
     /** Join a sponsor; an empty id ends the current sponsorship for good. */
     setSponsor(id: string) { return this.act((c, env) => (id ? joinSponsor(c, env, id) : breakSponsor(c, env, 'ended by the command'))); }
     orderFromSponsor(unit: string, zone: DeliveryZone) { return this.act((c, env) => void buyFromSponsor(c, env, unit, zone)); }
+    goToHall(hallId: string) { return this.act((c, env) => goToHall(c, env, hallId)); }
     collectDelivery(cuId: string) { return this.act(c => collectDelivery(c, cuId)); }
 
     // ---------- plumbing ----------

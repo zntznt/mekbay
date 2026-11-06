@@ -3,19 +3,19 @@
 import type { GameSystem } from '../../models/common.model';
 import {
     DAMAGE_LABEL, RuleError, isGone,
-    type Campaign, type CampaignPilot, type CampaignUnit, type FixedPilot, type MapBattle, type RunnerEnv, type TableRoller,
+    type Campaign, type CampaignPilot, type CampaignUnit, type FixedPilot, type MapBattle, type RollLogLine, type RunnerEnv, type TableRoller,
     type TrackDraft, type TrackRecord, type TrackResult, type UnitOutcome, type Winner,
 } from './campaign.model';
 import { roll, type Rng } from './dice';
 import {
-    SCALE, combatPay, commandBand, pct, purchasePrice, stepLabel, supportKind, trackLimit, type CombatTier, type CommandBand,
+    SCALE, SUPPORT_RATING_MOD, combatPay, commandBand, pct, purchasePrice, stepLabel, supportKind, trackLimit, type CombatTier, type CommandBand,
 } from './engine';
 import { effectsOf, enemyAt, groupMove, hexDist, hexName, hexType, isNamed, mapOf, pathLength, withdrawHex } from './hex-map';
 import { MAX_NAMED, isBAPilot, pilotStats } from './pilots';
-import { byId, uid, type Side } from './publication.model';
+import { BETWEEN_BLOCKS, briefNodes, byId, uid, type BetweenBlock, type HotSpot, type Publication, type Side } from './publication.model';
 import { rulesFor } from './rules';
 import {
-    activeFormations, coverage, fmt, forceValue, ownUnits, period, post, repairTimeKind, repairTimeNow, REPAIR_TIME,
+    activeFormations, betweenBlocked, betweenCostFactor, coverage, fmt, forceValue, note, ownUnits, period, post, repairTimeKind, repairTimeNow, REPAIR_TIME,
     supportStep, unitCount, unitName, variantOf,
 } from './runner';
 import { monthPlan, nextItem } from './script';
@@ -224,18 +224,83 @@ export function trackForce(c: Campaign, env: RunnerEnv, d: TrackDraft) {
     return { ok: !errors.length, errors, warns, own, hires, granted, ownV, hireV, total, limit, units, crews, bsp, formations, groups };
 }
 
+/** The hot spot offering the active contract. */
+export function hotSpotOf(c: Campaign, pub: Publication): HotSpot | undefined {
+    const id = c.contract?.contractId;
+    return id ? pub.hotSpots.find(h => (h.contractIds || []).includes(id)) : undefined;
+}
+/** Contract-wide conditions and world circumstances as short label / value pairs (publication text, no rules prose). */
+export function contractConditions(c: Campaign, pub: Publication): { label: string; value: string }[] {
+    const out: { label: string; value: string }[] = [];
+    const add = (label: string, value: string | undefined) => value && out.push({ label, value });
+    const ct = c.contract;
+    const k = ct ? byId(pub, 'contracts', ct.contractId) : undefined;
+    const hs = ct ? hotSpotOf(c, pub) : undefined;
+    if (k) {
+        const l = k.location;
+        add('Location', [l.planet, l.faction].filter(Boolean).join(' · '));
+        add('Disputed by', l.disputedBy);
+        add('Terrain', l.terrain);
+    }
+    for (const f of hs?.facts || []) add(String(f.label || ''), String(f.value || ''));
+    const hall = byId(pub, 'halls', ct ? hs?.hallId : c.hallId);
+    if (hall) add('Hiring hall', `${hall.name}, support ${hall.support} (repairs ×${SUPPORT_RATING_MOD[hall.support] ?? 1}${ct ? ' between contracts' : ''})`);
+    if (ct) {
+        add('Rules variant', variantOf(c, pub)?.name);
+        const rt = k?.repairTime || (c.options.repairTimeTable ? 'roll' : '');
+        add('Repair time', rt === 'roll' ? 'Repair Time Table' : rt ? REPAIR_TIME[rt] : '');
+        const now = repairTimeNow(c);
+        if (now !== 'standard') add('Now', REPAIR_TIME[now]);
+        const ev = trackEventTables(c, pub);
+        add('Track events', [ev.complications?.name, ev.world?.name].filter(Boolean).join(' · '));
+    }
+    return out;
+}
+/** Tables rolled once per track: the brief's command complications and the hot spot's world table. */
+export function trackEventTables(c: Campaign, pub: Publication) {
+    const ct = c.contract;
+    const cx = ct ? byId(pub, 'briefs', ct.briefId)?.complications : undefined;
+    const hs = hotSpotOf(c, pub);
+    return {
+        cx, complications: cx?.tableId ? byId(pub, 'tables', cx.tableId) : undefined,
+        world: hs?.worldTableId ? byId(pub, 'tables', hs.worldTableId) : undefined,
+    };
+}
+/** Roll the per-track event tables once; their effects apply when the track is applied. */
 export function rollComplications(c: Campaign, env: RunnerEnv, d: TrackDraft, rollTable: TableRoller) {
     const ct = c.contract;
     if (!ct) return null;
-    const cx = byId(env.pub, 'briefs', ct.briefId)?.complications;
-    const t = cx?.tableId ? byId(env.pub, 'tables', cx.tableId) : undefined;
-    if (!cx || !t) return null;
+    const { cx, complications: t, world } = trackEventTables(c, env.pub);
+    if (!t && !world) return null;
+    if (d.complications.length) throw new RuleError('Track events are already rolled for this track.');
     let band: CommandBand = commandBand(ct.terms.command);
     if (c.skipPenalty) band = ({ Independent: 'Liaison', Liaison: 'House', House: 'Integrated', Integrated: 'Integrated', None: 'None' } as const)[band];
-    const mod = Number(cx.mods?.[band.toLowerCase()] ?? 0);
-    const log = rollTable(t, { pub: env.pub, system: d.system, modifier: mod, scale: d.scale, side: ct.side });
-    d.complications = log.map(l => ({ depth: l.depth, text: l.text }));
+    const mod = Number(cx?.mods?.[band.toLowerCase()] ?? 0);
+    const opts = { pub: env.pub, system: d.system, scale: d.scale, side: ct.side };
+    const log = [...(t ? rollTable(t, { ...opts, modifier: mod }) : []), ...(world ? rollTable(world, { ...opts, modifier: 0 }) : [])];
+    d.complications = log.map(l => ({ depth: l.depth, text: l.text, ...(l.effect ? { effect: l.effect } : {}) }));
     return { band, mod, log };
+}
+
+/** Effects of a track's rolled events: SP bonus, support shift, blocks and cost change until the next track. */
+export function eventEffects(lines: readonly RollLogLine[], scale: number) {
+    let sp = 0;
+    let supportShift = 0;
+    let costPct = 0;
+    const block = new Set<BetweenBlock>();
+    const labels: string[] = [];
+    for (const l of lines) {
+        const e = l.effect;
+        if (!e) continue;
+        if (e.kind === 'amount' && e.currency === 'SP') sp += (Number(e.value) || 0) * (e.perScale ? scale : 1);
+        else if (e.kind === 'step' && e.term === 'support' && e.mode === 'shift') supportShift -= Number(e.value) || 0;
+        else if (e.kind === 'between') {
+            for (const b of e.block || []) if (BETWEEN_BLOCKS.includes(b)) block.add(b);
+            costPct += Number(e.costPct) || 0;
+        } else continue;
+        labels.push(l.text);
+    }
+    return { sp, supportShift: Math.max(0, supportShift), costPct, block: [...block], labels };
 }
 
 // ---------- per-system checks on destroyed units ----------
@@ -314,7 +379,7 @@ export function applyTrack(c: Campaign, env: RunnerEnv, r: TrackResult): TrackRe
     const tr = byId(pub, 'tracks', d.trackId);
     const v = variantOf(c, pub);
     const ourWin = r.winner === ct.side;
-    const cover = coverage(c, pub);
+    delete ct.between; // the previous track's window closes with this track
     const sStep = supportStep(c);
     const battleSupport = supportKind(sStep) === 'battle';
     const supportLater = !!v?.o.supportAtEnd;
@@ -425,15 +490,7 @@ export function applyTrack(c: Campaign, env: RunnerEnv, r: TrackResult): TrackRe
         }
     }
 
-    // 4. Rearm: support covers it.
-    const rc = toftt ? 0 : rearmCost(env, d, [...f.own, ...f.hires], r);
-    if (rc && supportLater) ct.deferredSupport = (ct.deferredSupport || 0) + Math.round(rc * cover);
-    if (rc) {
-        const tons = r.ammoTons || r.advTons ? ` (${r.ammoTons || 0} t${r.advTons ? `, ${r.advTons} t advanced` : ''})` : '';
-        post(c, { event: `Rearm${tons}`, cost: rc, cover: supportLater ? 0 : Math.round(rc * cover), kind: 'rearm' });
-    }
-
-    // 5. Bookkeeping.
+    // 4. Bookkeeping.
     ct.buildings += Number(r.buildings) || 0;
     const rec: TrackRecord = {
         id: d.id, contract: ct.name, contractRef: ct.id, date: c.date, month: ct.month, key: d.itemKey, name: d.name, system: d.system, scale: d.scale,
@@ -455,14 +512,39 @@ export function applyTrack(c: Campaign, env: RunnerEnv, r: TrackResult): TrackRe
     if (d.mapBattle) resolveMapBattle(c, env, d.mapBattle, w, rec);
     if (v?.o.noDamagePersists) for (const cu of [...f.own, ...f.hires]) if (cu.state !== 'lost') cu.state = 'ok';
     c.draft = null;
-    if (c.options.repairTimeTable) {
-        const plan = monthPlan(c, pub);
-        if (nextItem(plan) || plan.waiting) {
-            const rr = roll('2D6', env.rng ?? Math.random).total;
-            const kind = repairTimeKind(rr);
+    // 5. Repair time before the next track of this month: script step, then contract, then the command's option.
+    const plan = monthPlan(c, pub);
+    if (nextItem(plan) || plan.waiting) {
+        const brief = byId(pub, 'briefs', ct.briefId);
+        const node = brief ? [...briefNodes(brief)].find(x => x.id === d.nodeId) : undefined;
+        const fixed = (node?.kind === 'track' && node.repairTime) || byId(pub, 'contracts', ct.contractId)?.repairTime || (c.options.repairTimeTable ? 'roll' : '');
+        if (fixed === 'roll' || (fixed && Object.hasOwn(REPAIR_TIME, fixed))) {
+            const rr = fixed === 'roll' ? roll('2D6', env.rng ?? Math.random).total : 0;
+            const kind = fixed === 'roll' ? repairTimeKind(rr) : fixed;
             ct.repairTime = { roll: rr, kind, date: period(c), after: ct.tracksThisMonth };
-            rec.repairTime = `${rr}: ${REPAIR_TIME[kind]}`;
+            rec.repairTime = rr ? `${rr}: ${REPAIR_TIME[kind]}` : REPAIR_TIME[kind];
         }
+    }
+
+    // 6. Track events (complications, world): bonus SP, then effects until the next track.
+    const ev = toftt ? null : eventEffects(rec.complications, d.scale);
+    // ponytail: a negative event amount may go into debt rather than block applying the track.
+    if (ev?.sp) post(c, { event: `Track event: ${d.name}`, cover: Math.max(0, ev.sp), cost: Math.max(0, -ev.sp), kind: 'combat', allowDebt: true });
+    if (ev && (ev.block.length || ev.costPct || ev.supportShift)) {
+        ct.between = { track: ct.trackIds.length, block: ev.block, costPct: ev.costPct, supportShift: ev.supportShift, labels: ev.labels };
+    }
+
+    // 7. Rearm: support covers it, unless there is no time or a track event forbids it.
+    const rc = toftt ? 0 : Math.ceil(rearmCost(env, d, [...f.own, ...f.hires], r) * betweenCostFactor(c) - 1e-9);
+    const noRearm = rc ? betweenBlocked(c, 'rearm') : '';
+    if (noRearm) {
+        rec.notes = [rec.notes, `${noRearm} Ammunition carries over.`].filter(Boolean).join(' ');
+        note(c, `Rearm skipped (${rc} SP): ${noRearm}`, 'rearm');
+    } else if (rc) {
+        const cover = coverage(c, pub);
+        if (supportLater) ct.deferredSupport = (ct.deferredSupport || 0) + Math.round(rc * cover);
+        const tons = r.ammoTons || r.advTons ? ` (${r.ammoTons || 0} t${r.advTons ? `, ${r.advTons} t advanced` : ''})` : '';
+        post(c, { event: `Rearm${tons}`, cost: rc, cover: supportLater ? 0 : Math.round(rc * cover), kind: 'rearm' });
     }
     return rec;
 }

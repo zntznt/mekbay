@@ -4,7 +4,7 @@ import type { GameSystem } from '../../models/common.model';
 import type { Rng } from './dice';
 import type { CombatTier, Terms } from './engine';
 import type { OpponentModule } from './opponent.model';
-import type { MapEffect, Publication, Side, Table } from './publication.model';
+import type { BetweenBlock, MapEffect, Publication, Side, Table, TableResult } from './publication.model';
 import type { LadderColumn } from './rules';
 import type { UnitLookup } from './units';
 
@@ -34,6 +34,8 @@ export interface RollLogLine {
     text: string;
     /** MekBay unit names produced by this line, if any. */
     units?: { unit: string }[] | null;
+    /** Machine-readable result (amount, step, between) for effects. */
+    effect?: TableResult;
 }
 
 /** Rolls a publication table (pointer sub-rolls etc.); supplied by the caller. */
@@ -193,7 +195,16 @@ export interface SalvageItem {
     price: number;
     track: string;
 }
-export type RepairTimeKind = 'hasty' | 'standard' | 'extended' | 'all';
+export type RepairTimeKind = 'none' | 'hasty' | 'standard' | 'extended' | 'all';
+/** Effects in force from the end of one track until the next track is applied. */
+export interface BetweenState {
+    /** `trackIds.length` when set; stale once another track is applied. */
+    track: number;
+    block: BetweenBlock[];
+    costPct: number;
+    supportShift: number;
+    labels: string[];
+}
 export interface PurchaseState {
     roll: number;
     count: number;
@@ -234,7 +245,9 @@ export interface ActiveContract {
     map?: MapState;
     supportOverride?: number | null;
     deferredSupport?: number;
+    /** `roll` 0 = fixed by the contract or the script. */
     repairTime?: { roll: number; kind: RepairTimeKind; date: string; after: number };
+    between?: BetweenState;
     skipTaken?: boolean;
     tofttPlayed?: string[];
     purchaseCfg?: { freq: 'month' | 'track' };

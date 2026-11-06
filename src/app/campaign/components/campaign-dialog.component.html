@@ -71,6 +71,14 @@
                             }
                         </section>
                         <div class="cp-row">
+                            @if (svc.pub()?.halls?.length) {
+                                <label class="cp-block">Based at
+                                    <select class="bt-select" (change)="svc.goToHall($any($event.target).value)">
+                                        <option value="" [selected]="!c.hallId">No hiring hall</option>
+                                        @for (h of svc.pub()!.halls; track h.id) { <option [value]="h.id" [selected]="h.id === c.hallId">{{ h.name }} (support {{ h.support }})</option> }
+                                    </select>
+                                </label>
+                            }
                             <button type="button" class="bt-button" (click)="svc.endMonth()">Wait a month</button>
                         </div>
                     } @else if (c.contract.status === 'ended') {
@@ -146,6 +154,16 @@
                                         @for (e of f.errors; track $index) { <li class="cp-danger">{{ e }}</li> }
                                         @for (w of f.warns; track $index) { <li class="cp-warn">{{ w }}</li> }
                                     </ul>
+                                    @if (hasEvents()) {
+                                        <h4>Track events</h4>
+                                        @if (d.complications.length) {
+                                            <ul class="cp-list">
+                                                @for (l of d.complications; track $index) { <li [style.margin-left.em]="l.depth" [class.cp-warn]="!!l.effect">{{ l.text }}</li> }
+                                            </ul>
+                                        } @else {
+                                            <button type="button" class="bt-button tiny" (click)="svc.rollEvents()">Roll track events</button>
+                                        }
+                                    }
                                     <div class="cp-row">
                                         <button type="button" class="bt-button" [disabled]="!f.crews.length" (click)="loadInMekBay()">Load force in MekBay</button>
                                         <button type="button" class="bt-button" (click)="svc.cancelTrack()">Cancel track</button>
@@ -179,10 +197,10 @@
                                 }
                                 @case ('Market') {
                                     <market-panel [campaign]="c" [env]="env" [labelOf]="svc.unitLabel" [search]="search"
-                                        (buy)="svc.addUnit($event.unit, { breakDeal: $event.breakDeal, source: $event.source })" (sell)="svc.removeUnit($event)"
+                                        (buy)="svc.addUnit($event.unit, { breakDeal: $event.breakDeal, source: $event.source })" (sell)="confirmSell($event)"
                                         (rollGate)="svc.rollPurchaseGate()" (rollTable)="svc.rollPurchaseTable()"
                                         (searchScrapyard)="svc.searchScrapyard($event)" (buyScrapyard)="svc.buyScrapyard($event)"
-                                        (setSponsor)="svc.setSponsor($event)" (order)="svc.orderFromSponsor($event.unit, $event.zone)" (collect)="svc.collectDelivery($event)" />
+                                        (setSponsor)="setSponsor($event)" (order)="svc.orderFromSponsor($event.unit, $event.zone)" (collect)="svc.collectDelivery($event)" />
                                 }
                                 @case ('Salvage') {
                                     <salvage-panel [campaign]="c" [labelOf]="svc.unitLabel" (buy)="svc.buySalvage($event)" (decline)="svc.declineSalvage($event)" />
@@ -191,7 +209,7 @@
                         </section>
                     }
                 </div>
-                <campaign-status class="cp-side" [campaign]="c" [labelOf]="svc.unitLabel" (assignPilot)="svc.assignPilot($event.cuId, $event.pilotId)" (removeUnit)="svc.removeUnit($event)" />
+                <campaign-status class="cp-side" [campaign]="c" [pub]="svc.pub()" [labelOf]="svc.unitLabel" (assignPilot)="svc.assignPilot($event.cuId, $event.pilotId)" (removeUnit)="confirmSell($event)" />
             </div>
         } @else {
             <section class="cp-card">

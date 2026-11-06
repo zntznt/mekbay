@@ -3,7 +3,7 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { DAMAGE_LABEL, isGone, type Campaign, type RunnerEnv } from '../core/campaign.model';
 import { repairQuote } from '../core/market';
-import { fmt, REPAIR_TIME, repairTimeNow } from '../core/runner';
+import { betweenNow, fmt, REPAIR_TIME, repairTimeNow } from '../core/runner';
 import { isOmni } from '../core/units';
 
 /** Repairs and Omni reconfiguration for the command's own units. */
@@ -13,13 +13,14 @@ import { isOmni } from '../core/units';
     styleUrl: './campaign.shared.scss',
     template: `
         @if (repairTime(); as rt) { <p class="cp-warn">{{ rt }}</p> }
+        @if (events(); as ev) { <p class="cp-warn">Until the next track: {{ ev }}</p> }
         <table class="cp-table">
-            <thead><tr><th>Unit</th><th>State</th><th class="num">Cost</th><th class="num">Covered</th><th class="num">Pay</th><th></th></tr></thead>
+            <thead><tr><th>Unit</th><th>Repair level</th><th class="num">Cost</th><th class="num">Covered</th><th class="num">Pay</th><th></th></tr></thead>
             <tbody>
                 @for (r of rows(); track r.id) {
                     <tr>
                         <td>{{ r.label }}</td>
-                        <td>{{ damage[r.state] }}</td>
+                        <td>{{ damage[r.state] }}@if (r.quote && r.quote.notes.length && !r.quote.blocked) { <small class="cp-muted"> · {{ r.quote.notes.join(' · ') }}</small> }</td>
                         @if (r.quote; as q) {
                             @if (q.blocked) {
                                 <td colspan="4" class="cp-muted">{{ q.blocked }}</td>
@@ -27,7 +28,7 @@ import { isOmni } from '../core/units';
                                 <td class="num">{{ fmt(q.cost) }}</td>
                                 <td class="num">{{ q.cover ? fmt(q.cover) : '' }}</td>
                                 <td class="num">{{ fmt(q.net) }}</td>
-                                <td><button type="button" class="bt-button tiny" [title]="q.notes.join('; ')" (click)="repair.emit(r.id)">Repair</button></td>
+                                <td><button type="button" class="bt-button tiny" (click)="repair.emit(r.id)">Repair</button></td>
                             }
                         } @else if (r.configs.length) {
                             <td colspan="4">
@@ -60,6 +61,12 @@ export class RepairsPanelComponent {
     protected readonly repairTime = computed(() => {
         const k = repairTimeNow(this.campaign());
         return k === 'standard' ? '' : REPAIR_TIME[k];
+    });
+    protected readonly events = computed(() => {
+        const b = betweenNow(this.campaign());
+        if (!b) return '';
+        const parts = [...b.block.map(x => `no ${x}`), ...(b.supportShift ? [`support −${b.supportShift} steps`] : []), ...(b.costPct ? [`SP costs ${b.costPct > 0 ? '+' : ''}${b.costPct}%`] : [])];
+        return parts.join(', ');
     });
     /** Damaged units with their quote, plus operational Omnis that can reconfigure. */
     protected readonly rows = computed(() => {

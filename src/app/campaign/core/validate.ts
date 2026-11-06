@@ -4,10 +4,11 @@ import { GameSystem } from '../../models/common.model';
 import { compressNums, coverage, dieRange } from './dice';
 import { TERMS, TERM_LABEL, bestBasePayTerms, contractEconomics, selectable, tempHireRoom, trackLimit } from './engine';
 import {
-    COLLECTIONS, briefNodes, byId, isSplit, tableResults, trackRange,
+    BETWEEN_BLOCKS, COLLECTIONS, briefNodes, byId, isSplit, tableResults, trackRange,
     type CollectionKey, type Publication,
 } from './publication.model';
 import { rulesFor } from './rules';
+import { REPAIR_TIME } from './runner';
 import { unitGroup, type UnitLookup } from './units';
 
 export interface Issue {
@@ -76,6 +77,7 @@ export function validate(pub: Publication, units: UnitLookup | null = null): Iss
         ref('tables', c.purchase?.tableId, 'contracts', c.id, 'Purchase table');
         ref('variants', c.variantId, 'contracts', c.id, 'Rules variant');
         ref('maps', c.mapId, 'contracts', c.id, 'Campaign map');
+        if (c.repairTime && c.repairTime !== 'roll' && !Object.hasOwn(REPAIR_TIME, c.repairTime)) add('error', 'contracts', c.id, `Unknown repair time "${c.repairTime}"`);
         for (const id of c.tempHirePilotIds || []) ref('pilots', id, 'contracts', c.id, 'Temporary hire');
         if (c.opposedId) {
             const o = byId(pub, 'contracts', c.opposedId);
@@ -126,6 +128,7 @@ export function validate(pub: Publication, units: UnitLookup | null = null): Iss
                 case 'track':
                     if (!n.trackId) add('error', 'briefs', b.id, `Track step${n.label ? ` "${n.label}"` : ''} has no track selected`);
                     ref('tracks', n.trackId, 'briefs', b.id, 'Track step');
+                    if (n.repairTime && !Object.hasOwn(REPAIR_TIME, n.repairTime)) add('error', 'briefs', b.id, `Track step: unknown repair time "${n.repairTime}"`);
                     break;
                 case 'branch':
                     if (!n.of) add('error', 'briefs', b.id, 'Branch has no source track');
@@ -218,6 +221,10 @@ export function validate(pub: Publication, units: UnitLookup | null = null): Iss
                     if (res.tableId === t.id) add('warn', 'tables', t.id, 'Table points to itself');
                     break;
                 case 'track': ref('tracks', res.trackId, 'tables', t.id, 'Track result'); break;
+                case 'between':
+                    if (!Array.isArray(res.block) || res.block.some(x => !BETWEEN_BLOCKS.includes(x))) add('error', 'tables', t.id, `Between-tracks result: block must list ${BETWEEN_BLOCKS.join(', ')}`);
+                    if (!Number.isFinite(Number(res.costPct ?? 0)) || Number(res.costPct) < -100) add('error', 'tables', t.id, 'Between-tracks result: cost change must be a number of at least −100%');
+                    break;
                 case 'count':
                     if (!res.tableId) add('error', 'tables', t.id, 'Availability roll has no table to roll on');
                     ref('tables', res.tableId, 'tables', t.id, 'Availability roll');
@@ -268,6 +275,7 @@ export function validate(pub: Publication, units: UnitLookup | null = null): Iss
         for (const id of h.briefIds) ref('briefs', id, 'hotSpots', h.id, 'Brief');
         for (const id of h.tableIds) ref('tables', id, 'hotSpots', h.id, 'Table');
         ref('halls', h.hallId, 'hotSpots', h.id, 'Hiring hall');
+        ref('tables', h.worldTableId, 'hotSpots', h.id, 'World table');
         for (const v of h.venues || []) ref('tables', v.mapTableId, 'hotSpots', h.id, `Venue ${v.name}`);
         if (!h.contractIds.length) add('info', 'hotSpots', h.id, 'Hot spot has no contracts');
         const a = ym(h.availability?.from);

@@ -12,7 +12,7 @@ import { MAX_NAMED, newPilot } from './pilots';
 import { byId, uid, type Sponsor } from './publication.model';
 import { REPAIR_TONNAGE_MULT, rulesFor, type RepairLevel } from './rules';
 import {
-    addMonths, coverage, factionOf, note, parentOf, period, post, REPAIR_TIME, repairTimeNow, requireNoDebt, supportStep, trackFreeMonth,
+    addMonths, betweenBlocked, betweenCostFactor, coverage, factionOf, note, parentOf, period, post, REPAIR_TIME, repairTimeNow, requireNoDebt, supportStep, trackFreeMonth,
     unitName, variantOf,
 } from './runner';
 import { isBattleArmor, isVehicle, isOmni, unitGroup, type CampaignUnitData } from './units';
@@ -48,9 +48,8 @@ export function repairQuote(c: Campaign, env: RunnerEnv, cu: CampaignUnit): Repa
     const lvl = cu.state;
     if (!u || !isRepairLevel(lvl) || cu.scrapCheck || cu.delivery) return null;
     const rtk = repairTimeNow(c);
-    if (rtk === 'hasty' && lvl !== 'armor') {
-        return { blocked: 'Hasty repairs: only armor repairs and rearming before the next track.', level: lvl, cost: 0, cover: 0, credit: 0, deferred: 0, net: 0, notes: [], exempt: false };
-    }
+    const stop = betweenBlocked(c, 'repair') || (rtk === 'hasty' && lvl !== 'armor' ? 'Hasty repairs: only armor repairs and rearming before the next track.' : '');
+    if (stop) return { blocked: stop, level: lvl, cost: 0, cover: 0, credit: 0, deferred: 0, net: 0, notes: [], exempt: false };
     const base = rulesFor(c.system).baseRepairCost(u, lvl, { sizeRepairs: !!c.options.asSizeRepairs });
     let cost = base.cost;
     const notes = [base.note];
@@ -66,13 +65,15 @@ export function repairQuote(c: Campaign, env: RunnerEnv, cu: CampaignUnit): Repa
         cost *= 0.8;
         notes.push("'Mech Bay −20%");
     }
-    const hall = !c.contract && c.hallId ? byId(env.pub, 'halls', c.hallId) : undefined;
-    if (hall) {
-        const k = SUPPORT_RATING_MOD[hall.support] ?? 1;
-        if (k !== 1) {
-            cost *= k;
-            notes.push(`${hall.name} support ${hall.support} ×${k}`);
-        }
+    const k = hallFactor(c, env);
+    if (k.factor !== 1) {
+        cost *= k.factor;
+        notes.push(k.note);
+    }
+    const ev = betweenCostFactor(c);
+    if (ev !== 1) {
+        cost *= ev;
+        notes.push(`track event ×${ev}`);
     }
     cost = Math.ceil(cost - 1e-9); // R-16: round up at the end
     let cover = 0;
@@ -94,6 +95,12 @@ export function repairQuote(c: Campaign, env: RunnerEnv, cu: CampaignUnit): Repa
     const exempt = lvl === 'armor' || (lvl === 'structure' && omni) || (rtk === 'extended' && lvl === 'structure') || (rtk === 'all' && lvl !== 'destroyed');
     if (rtk !== 'standard' && exempt && lvl !== 'armor') notes.push(`${REPAIR_TIME[rtk]}: ready for the next track`);
     return { level: lvl, cost, cover: cover + credit, credit, deferred, net: cost - cover - credit, notes, exempt };
+}
+/** Hiring hall support modifier on repair, reconfigure and rearm costs; only while at the hall between contracts. */
+export function hallFactor(c: Campaign, env: RunnerEnv): { factor: number; note: string } {
+    const hall = !c.contract && c.hallId ? byId(env.pub, 'halls', c.hallId) : undefined;
+    const factor = hall ? (SUPPORT_RATING_MOD[hall.support] ?? 1) : 1;
+    return { factor, note: hall ? `${hall.name} support ${hall.support} ×${factor}` : '' };
 }
 export function repairUnit(c: Campaign, env: RunnerEnv, cuId: string): RepairQuote {
     const cu = c.units.find(u => u.id === cuId);
@@ -119,9 +126,24 @@ export function reconfigure(c: Campaign, env: RunnerEnv, cuId: string, newUnit: 
     const u = env.units(cu.unit);
     const nu = env.units(newUnit);
     if (!u || !nu || nu.chassis !== u.chassis) throw new RuleError('Pick a configuration of the same chassis.');
-    post(c, { event: `Reconfigure ${u.name} → ${nu.model}`, cost: rulesFor(c.system).reconfigureCost(u, { sizeRepairs: !!c.options.asSizeRepairs }), kind: 'repair' });
+    const stop = betweenBlocked(c, 'repair');
+    if (stop) throw new RuleError(stop);
+    const base = rulesFor(c.system).reconfigureCost(u, { sizeRepairs: !!c.options.asSizeRepairs });
+    const cost = Math.ceil(base * hallFactor(c, env).factor * betweenCostFactor(c) - 1e-9);
+    post(c, { event: `Reconfigure ${u.name} → ${nu.model}`, cost, kind: 'repair' });
     cu.unit = newUnit;
     cu.omni = true;
+}
+
+/** Base the command at a hiring hall between contracts ('' = none). */
+export function goToHall(c: Campaign, env: RunnerEnv, hallId: string): void {
+    if (c.contract) throw new RuleError('Move to a hiring hall between contracts.');
+    const hall = hallId ? byId(env.pub, 'halls', hallId) : undefined;
+    if (hallId && !hall) throw new RuleError('Hiring hall not found.');
+    if (c.hallId === hallId) return;
+    // ponytail: no travel cost or time; the rules price travel only as contract transport.
+    c.hallId = hallId;
+    note(c, hall ? `Based at ${hall.name}` : 'Left the hiring hall');
 }
 
 // ---------- healing ----------
@@ -134,7 +156,7 @@ export function healLimit(c: Campaign, pl: Campaign['pilots'][number], env: Runn
     const extra = ct?.map && env ? effectsOf(c, env.pub, 'heal').reduce((s, e) => s + (Number(e.value) || 0), 0) : 0;
     const perMonth = h.boxesPerMonth + extra - done;
     const rtk = repairTimeNow(c);
-    if (rtk === 'hasty') return 0;
+    if (rtk === 'hasty' || betweenBlocked(c, 'heal')) return 0;
     let between = Infinity;
     if (h.boxesBetweenTracks != null && rtk !== 'all' && ct && ct.tracksThisMonth > 0) {
         between = pl.healedGap === ct.tracksThisMonth ? 0 : h.boxesBetweenTracks;
@@ -149,9 +171,10 @@ export function healPilot(c: Campaign, env: RunnerEnv, pid: string, boxes = 1): 
     const whole = Math.min(injury, pl.wounds);
     // Systems that count injuries heal one whole injury at a time.
     if (injury > 1 && boxes < injury && lim >= whole) boxes = whole;
-    if (boxes > lim) throw new RuleError(repairTimeNow(c) === 'hasty' ? 'Hasty repairs: no healing before the next track.' : `${pl.name} can heal ${lim} more wound(s) now.`);
+    const stop = betweenBlocked(c, 'heal') || (repairTimeNow(c) === 'hasty' ? 'Hasty repairs: no healing before the next track.' : '');
+    if (boxes > lim) throw new RuleError(stop || `${pl.name} can heal ${lim} more wound(s) now.`);
     if (injury > 1) boxes = Math.max(boxes, whole);
-    const cost = (pl.unitType === 'Battle Armor' ? COSTS.healTrooper : COSTS.heal) * boxes;
+    const cost = Math.ceil((pl.unitType === 'Battle Armor' ? COSTS.healTrooper : COSTS.heal) * boxes * betweenCostFactor(c) - 1e-9);
     const ct = c.contract;
     const would = ct ? Math.round(cost * coverage(c, env.pub)) : 0;
     const later = !!ct && !!variantOf(c, env.pub)?.o.supportAtEnd;
@@ -230,6 +253,7 @@ export function trainSca(c: Campaign, env: RunnerEnv, pid: string, name: string)
     if (!trackFreeMonth(c, env.pub)) throw new RuleError('Command training needs a month without a track (R-15).');
     const pl = c.pilots.find(p => p.id === pid);
     if (!pl) throw new RuleError('Pilot not found.');
+    if (pl.scas.includes(name)) throw new RuleError(`${pl.name} already knows ${name}.`);
     let cost: number = COSTS.sca[Math.min(pl.scas.length, 2)];
     const par = parentOf(c, env.pub);
     if (par && (par.scaIds || []).some(id => byId(env.pub, 'scas', id)?.name === name)) cost = Math.ceil(cost / 2);

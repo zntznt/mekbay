@@ -18,13 +18,15 @@ import { LADDER, rulesFor, type LadderColumn } from '../core/rules';
                 @if (p.wounds) {
                     <button type="button" class="bt-button tiny" [disabled]="!p.healLimit" (click)="heal.emit(p.id)">Heal ({{ p.healCost }} SP)</button>
                 }
+                @let sca = p.scas.includes(val(p.id + ':sca')) ? '' : val(p.id + ':sca');
+                @let fm = val(p.id + ':fm') === p.formation ? '' : val(p.id + ':fm');
                 <select class="bt-select" (change)="setVal(p.id + ':sca', $event)">
-                    <option value="">Command ability…</option>
-                    @for (s of scaNames(); track s) { <option [value]="s" [disabled]="p.scas.includes(s)">{{ s }}</option> }
+                    <option value="" [selected]="!sca">Command ability…</option>
+                    @for (s of scaNames(); track s) { <option [value]="s" [disabled]="p.scas.includes(s)" [selected]="s === sca">{{ s }}</option> }
                 </select>
-                <button type="button" class="bt-button tiny" [disabled]="!val(p.id + ':sca')" (click)="trainSca.emit({ pilotId: p.id, name: val(p.id + ':sca') })">Train ({{ p.scaCost }} SP)</button>
-                <input class="bt-input" type="text" placeholder="Formation type" [value]="val(p.id + ':fm')" (input)="setVal(p.id + ':fm', $event)">
-                <button type="button" class="bt-button tiny" [disabled]="!val(p.id + ':fm')" (click)="trainFormation.emit({ pilotId: p.id, formation: val(p.id + ':fm') })">Train formation</button>
+                <button type="button" class="bt-button tiny" [disabled]="!sca" (click)="trainSca.emit({ pilotId: p.id, name: sca })">Train ({{ p.scaCost }} SP)</button>
+                <input class="bt-input" type="text" placeholder="Formation type" [value]="fm" (input)="setVal(p.id + ':fm', $event)">
+                <button type="button" class="bt-button tiny" [disabled]="!fm" (click)="trainFormation.emit({ pilotId: p.id, formation: fm })">Train formation</button>
             </div>
             @if (p.unspent) {
                 <table class="cp-table">
@@ -77,7 +79,7 @@ export class PilotsPanelComponent {
     protected readonly costs = COSTS;
     protected readonly hireName = signal('');
     protected readonly crewUnit = signal('');
-    /** Per-pilot form values, keyed "pilotId:field". */
+    /** Per-pilot form values, keyed "pilotId:field". Training fields read as empty once the pilot has what they name. */
     private readonly vals = signal<Record<string, string>>({});
 
     protected readonly scaNames = computed(() => this.env().pub.scas.map(s => s.name));
@@ -89,7 +91,7 @@ export class PilotsPanelComponent {
             const s = pilotStats(p, c.system);
             const half = isBAPilot(p);
             return {
-                id: p.id, name: p.name, wounds: p.wounds, unspent: p.unspent, scas: p.scas,
+                id: p.id, name: p.name, wounds: p.wounds, unspent: p.unspent, scas: p.scas, formation: p.formation,
                 skill: rules.skillLabel({ gunnery: s.g, piloting: s.p, skill: s.skill }),
                 healLimit: healLimit(c, p, env),
                 healCost: (half ? COSTS.healTrooper : COSTS.heal) * Math.min(rules.healing.boxesPerInjury, p.wounds || 1),

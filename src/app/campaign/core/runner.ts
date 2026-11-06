@@ -3,7 +3,7 @@
 import { GameSystem } from '../../models/common.model';
 import {
     CAMPAIGN_SCHEMA, RuleError, isGone,
-    type ActiveContract, type Campaign, type CampaignUnit, type CompanyOptions, type LedgerEntry, type LedgerKind,
+    type ActiveContract, type BetweenState, type Campaign, type CampaignUnit, type CompanyOptions, type LedgerEntry, type LedgerKind,
     type RepairTimeKind, type RunnerEnv, type TrackDraft,
 } from './campaign.model';
 import { roll } from './dice';
@@ -13,7 +13,7 @@ import {
 } from './engine';
 import { effectsOf, mapOf, newMapState } from './hex-map';
 import { newPilot, MAX_NAMED } from './pilots';
-import { byId, uid, type Contract, type Faction, type ParentCommand, type Publication, type Variant } from './publication.model';
+import { byId, uid, type BetweenBlock, type Contract, type Faction, type ParentCommand, type Publication, type Variant } from './publication.model';
 import { rulesFor } from './rules';
 import { monthPlan } from './script';
 import { unitCountWeight, type UnitLookup } from './units';
@@ -291,6 +291,7 @@ export function trackFreeMonth(c: Campaign, pub: Publication): boolean {
 // ---------- repair time (optional table) ----------
 
 export const REPAIR_TIME: Readonly<Record<RepairTimeKind, string>> = {
+    none: 'No repairs',
     hasty: 'Hasty repairs', standard: 'Standard repairs', extended: 'Extended repairs', all: 'All the time in the world',
 };
 export function repairTimeKind(roll2d6: number): RepairTimeKind {
@@ -300,6 +301,23 @@ export function repairTimeNow(c: Campaign): RepairTimeKind {
     const ct = c.contract;
     const rt = ct?.repairTime;
     return rt && rt.date === period(c) && rt.after === ct.tracksThisMonth ? rt.kind : 'standard';
+}
+
+/** Between-tracks effects in force now (set when the last track was applied). */
+export function betweenNow(c: Campaign): BetweenState | null {
+    const b = c.contract?.between;
+    return b && b.track === c.contract!.trackIds.length ? b : null;
+}
+/** Why an SP activity can't be done now, or ''. 'No repairs' blocks every activity. */
+export function betweenBlocked(c: Campaign, what: BetweenBlock): string {
+    if (repairTimeNow(c) === 'none') return 'No repairs: no time for repairs, rearming or healing before the next track.';
+    const b = betweenNow(c);
+    return b?.block.includes(what) ? `Track event: no ${what === 'heal' ? 'healing' : what === 'rearm' ? 'rearming' : 'repairs'} before the next track.` : '';
+}
+/** Multiplier on SP activity costs from between-tracks effects. */
+// ponytail: applied to repair, reconfigure, rearm and heal only; purchases and hiring would need it in every buy path.
+export function betweenCostFactor(c: Campaign): number {
+    return 1 + (betweenNow(c)?.costPct || 0) / 100;
 }
 
 // ---------- contracts ----------
@@ -323,7 +341,8 @@ export function supportCoverage(terms: Terms): number {
 }
 /** Support step in force now (final-battle override wins). */
 export function supportStep(c: Campaign): number {
-    return c.contract?.supportOverride ?? c.contract?.terms.support ?? 0;
+    const step = c.contract?.supportOverride ?? c.contract?.terms.support ?? 0;
+    return Math.max(0, step - (betweenNow(c)?.supportShift || 0));
 }
 /** Fraction of repair/rearm/heal costs the employer covers now, including map effects. */
 export function coverage(c: Campaign, pub: Publication | null): number {

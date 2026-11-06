@@ -3,12 +3,14 @@
 import { DialogRef } from '@angular/cdk/dialog';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { GameSystem } from '../../models/common.model';
+import { DialogsService } from '../../services/dialogs.service';
 import { CampaignService } from '../campaign.service';
-import { isGone, type TrackResult } from '../core/campaign.model';
+import { DAMAGE_LABEL, isGone, type TrackResult } from '../core/campaign.model';
+import { sellQuote } from '../core/market';
 import { selectableSteps, stepLabel, TERMS, TERM_LABEL, type TermKey, type Terms } from '../core/engine';
 import type { PlanItem } from '../core/script';
 import { availableContracts, fmt, period } from '../core/runner';
-import { unitAvailable } from '../core/track';
+import { trackEventTables, unitAvailable } from '../core/track';
 import { CampaignStatusComponent } from './campaign-status.component';
 import { MarketPanelComponent } from './market-panel.component';
 import { PilotsPanelComponent } from './pilots-panel.component';
@@ -30,6 +32,7 @@ const SYSTEM_LABEL: Record<GameSystem, string> = { [GameSystem.CLASSIC]: 'Classi
 export class CampaignDialogComponent {
     private readonly dialogRef = inject(DialogRef<void>);
     protected readonly svc = inject(CampaignService);
+    private readonly dialogs = inject(DialogsService);
 
     protected readonly fmt = fmt;
     protected readonly systemLabel = SYSTEM_LABEL;
@@ -57,6 +60,14 @@ export class CampaignDialogComponent {
     protected readonly monthPending = computed(() => {
         const c = this.svc.campaign();
         return !!c && c.maintPaid !== period(c);
+    });
+    /** Whether the active contract has per-track event tables to roll. */
+    protected readonly hasEvents = computed(() => {
+        const c = this.svc.campaign();
+        const pub = this.svc.pub();
+        if (!c?.contract || !pub) return false;
+        const t = trackEventTables(c, pub);
+        return !!(t.complications || t.world);
     });
     /** Units that can be picked for the current track. */
     protected readonly trackUnits = computed(() => {
@@ -142,7 +153,26 @@ export class CampaignDialogComponent {
         if (await this.svc.loadForceInMekBay()) this.close();
     }
     protected async removeSave(id: string): Promise<void> {
-        await this.svc.remove(id);
+        const name = this.svc.saves().find(s => s.id === id)?.name || 'this campaign';
+        if (await this.dialogs.requestConfirmation(`Delete ${name}? This cannot be undone.`, 'Delete campaign', 'danger')) await this.svc.remove(id);
+    }
+
+    // ---------- confirmations for irreversible actions ----------
+
+    protected async confirmSell(cuId: string): Promise<void> {
+        const c = this.svc.campaign();
+        const env = this.svc.env();
+        const cu = c?.units.find(u => u.id === cuId);
+        if (!c || !env || !cu) return;
+        const name = cu.name || this.svc.unitLabel(cu.unit);
+        const msg = c.setup
+            ? `Remove ${name} from the starting force?`
+            : `Sell ${name} for ${fmt(sellQuote(c, env, cu))} SP${cu.state !== 'ok' ? ` (${DAMAGE_LABEL[cu.state].toLowerCase()}, half price)` : ''}? This cannot be undone.`;
+        if (await this.dialogs.requestConfirmation(msg, c.setup ? 'Remove unit' : 'Sell unit', 'warning')) await this.svc.removeUnit(cuId);
+    }
+    protected async setSponsor(id: string): Promise<void> {
+        if (!id && !(await this.dialogs.requestConfirmation('End the sponsorship? The sponsor will never deal with you again; undelivered orders are refunded.', 'End sponsorship', 'danger'))) return;
+        await this.svc.setSponsor(id);
     }
 }
 

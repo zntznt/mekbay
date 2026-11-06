@@ -274,4 +274,26 @@ describe('CampaignService', () => {
         expect(await svc.declineSalvage(locust.id)).toBeTrue();
         expect(svc.campaign()!.contract!.salvagePool).toEqual([]);
     });
+
+    it('rolls track events once and applies their effects with the result', async () => {
+        await started();
+        await svc.signContract('ct_glass', RAISED);
+        expect(await svc.rollEvents()).toBeFalse(); // no track set up yet
+        const c = svc.campaign()!;
+        await svc.startTrack(svc.nextTrack()!, c.units.map(u => u.id));
+        expect(await svc.rollEvents()).toBeTrue();
+        expect(svc.campaign()!.draft!.complications.length).toBeGreaterThan(0);
+        expect(await svc.rollEvents()).toBeFalse();
+        expect(svc.error()).toContain('already rolled');
+        expect(await svc.applyTrack({ winner: 'A', tier: 'success', ammoTons: 1 })).toBeTrue();
+        expect(svc.campaign()!.contract!.between!.block).toEqual(['rearm']);
+    });
+
+    it('moves to a hiring hall only between contracts', async () => {
+        await started();
+        expect(await svc.goToHall('hh_test')).toBeTrue();
+        expect(svc.campaign()!.hallId).toBe('hh_test');
+        await svc.signContract('ct_glass', RAISED);
+        expect(await svc.goToHall('')).toBeFalse();
+    });
 });

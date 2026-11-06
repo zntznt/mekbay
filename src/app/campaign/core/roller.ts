@@ -51,6 +51,10 @@ function describe(res: TableResult, ctx: Ctx): string {
         case 'count': return `Roll ${res.die} for rolls on ${table(res.tableId)}`;
         case 'pilot': return byId(pub, 'pilots', res.pilotId)?.name || '(missing pilot)';
         case 'upgrade': return byId(pub, 'upgrades', res.upgradeId)?.name || '(missing upgrade)';
+        case 'between': {
+            const parts = [...(res.block || []).map(b => `no ${b}`), ...(res.costPct ? [`SP costs ${res.costPct > 0 ? '+' : ''}${res.costPct}%`] : [])];
+            return `Until the next track: ${parts.join(', ') || 'no effect'}${res.note ? ` — ${res.note}` : ''}`;
+        }
         case 'none': return 'No result';
     }
 }
@@ -112,7 +116,10 @@ function resolve(res: TableResult | undefined, ctx: Ctx, depth: number, log: Rol
             return;
         }
         default:
-            log.push({ depth, text: describe(res, ctx), units: res.kind === 'units' ? res.units.map(x => ({ unit: x.unit })) : null });
+            log.push({
+                depth, text: describe(res, ctx), units: res.kind === 'units' ? res.units.map(x => ({ unit: x.unit })) : null,
+                ...(res.kind === 'amount' || res.kind === 'step' || res.kind === 'between' ? { effect: res } : {}),
+            });
     }
 }
 

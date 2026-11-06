@@ -87,6 +87,33 @@ export function makePublication(): Publication {
     ct.purchase = { tableId: market.id, gateDie: '2D6', gate: [{ min: 2, count: 1 }], freq: 'month', note: '' };
     pub.sponsors.push({ id: 'sp_works', name: 'Test Works', scope: ['Vehicle'], discountPct: 10, deliveryInTerritory: 1, deliveryNear: 2, nearJumps: 3, purchaseTableId: '' });
     pub.scas.push({ id: 'sca_test', name: 'Test Ability' });
+
+    // Track events: one complications roll applies every column; the hot spot's world table raises SP costs.
+    const events = {
+        ...newTable(), id: 'tb_events', name: 'Harbor complications', die: '1D6',
+        columns: [{ key: 'a', label: 'Ammo' }, { key: 'b', label: 'Logistics' }, { key: 'c', label: 'Trade' }],
+        rows: [{
+            min: 1, max: 20, cells: {
+                a: { kind: 'between' as const, block: ['rearm' as const], costPct: 0, note: '' },
+                b: { kind: 'step' as const, term: 'support' as const, mode: 'shift' as const, value: -4 },
+                c: { kind: 'amount' as const, currency: 'SP' as const, value: 250, perScale: true, note: '' },
+            },
+        }],
+    };
+    const world = {
+        ...newTable(), id: 'tb_world', name: 'Testworld ruler', die: '1D6',
+        rows: [{ min: 1, max: 6, cells: { r: { kind: 'between' as const, block: [], costPct: 4, note: '' } } }],
+    };
+    pub.tables.push(events, world);
+    brief.complications.tableId = events.id;
+    pub.halls.push({
+        id: 'hh_test', name: 'Test Hall', systemId: '', support: 'B', reducedMaintenance: true, generatorId: '', systemTableId: '',
+        purchaseTableIds: [], tempHireTableId: '', boardTableId: '', pilotIds: [], upgradeIds: [],
+    });
+    pub.hotSpots.push({
+        id: 'hs_glass', name: 'Testworld', contractIds: [ct.id], briefIds: [brief.id], tableIds: [], availability: { from: '', to: '' },
+        venues: [], hallId: 'hh_test', worldTableId: world.id, facts: [{ label: 'Ruler', value: 'Rank 5' }],
+    });
     return pub;
 }
 

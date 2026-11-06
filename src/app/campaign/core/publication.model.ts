@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { GameSystem } from '../../models/common.model';
+import type { RepairTimeKind } from './campaign.model';
 import type { CombatTier, SupportRating, TermKey, TermLocks, Terms, VariantOptions } from './engine';
 import type { RowRange } from './dice';
 
@@ -47,6 +48,10 @@ export interface UnitRef {
 
 // ---------- tables ----------
 
+/** SP activities a between-tracks effect can block until the next track. */
+export type BetweenBlock = 'repair' | 'rearm' | 'heal';
+export const BETWEEN_BLOCKS: readonly BetweenBlock[] = ['repair', 'rearm', 'heal'];
+
 export type DupPolicy = 'apply' | 'ignore' | 'reroll' | 'rerollSome' | 'rerollUntil' | 'none';
 
 export type TableResult =
@@ -64,6 +69,8 @@ export type TableResult =
     | { kind: 'count'; die: string; thresholds: { min: number; count: number }[]; tableId: string; note: string }
     | { kind: 'pilot'; pilotId: string; note: string }
     | { kind: 'upgrade'; upgradeId: string; note: string }
+    /** Between this track and the next: blocked SP activities and a cost change in percent. */
+    | { kind: 'between'; block: BetweenBlock[]; costPct: number; note: string }
     | { kind: 'none' };
 export type ResultKind = TableResult['kind'];
 
@@ -109,7 +116,8 @@ export interface Track {
 // ---------- briefs ----------
 
 export type BriefNode =
-    | { id: string; kind: 'track'; trackId: string; attacker: Side; label: string; optional: boolean }
+    /** `repairTime`: fixed repair time after this track (before the next one), overriding the contract's. */
+    | { id: string; kind: 'track'; trackId: string; attacker: Side; label: string; optional: boolean; repairTime?: RepairTimeKind | '' }
     | { id: string; kind: 'branch'; of: string; cases: { when: string; nodes: BriefNode[] }[] }
     | { id: string; kind: 'lookup'; keys: [string, string]; cases: { match: string[]; nodes: BriefNode[] }[] }
     | { id: string; kind: 'random'; tableId: string; rolls: number; dup: DupPolicy; note: string }
@@ -197,8 +205,11 @@ export interface Contract {
     briefId: string;
     variantId: string;
     mapId: string;
+    /** Repair time between tracks of the same month: '' = the command's option, 'roll' = Repair Time Table, or a fixed kind. */
+    repairTime: ContractRepairTime;
     notes: string;
 }
+export type ContractRepairTime = '' | 'roll' | RepairTimeKind;
 
 // ---------- people, places, assets ----------
 
@@ -228,6 +239,10 @@ export interface HotSpot {
     availability: { from: string; to: string };
     venues: { name: string; mapTableId: string }[];
     hallId: string;
+    /** Table rolled once per track while on a contract here (world circumstances); its effects apply like complications. */
+    worldTableId: string;
+    /** Short label / value pairs shown with the contract (ruler, HPG, presence …). */
+    facts: { label: string; value: string }[];
 }
 export interface Hall {
     id: string;
@@ -468,7 +483,7 @@ export function newContract(): Contract {
         location: { planet: '', faction: '', sub: '', disputedBy: '', random: false, terrain: '' },
         type: 'Raid', subtype: '', length: 3, terms: defaultTerms(), locks: {}, nonNegotiable: false, piracy: false,
         purchase: { tableId: '', gateDie: '2D6', gate: [{ min: 7, count: 1 }, { min: 11, count: 2 }], freq: 'month', note: '' },
-        tempHires: [], tempHirePilotIds: [], opposedId: '', briefId: '', variantId: '', mapId: '', notes: '',
+        tempHires: [], tempHirePilotIds: [], opposedId: '', briefId: '', variantId: '', mapId: '', repairTime: '', notes: '',
     };
 }
 export function newBrief(): Brief {
@@ -618,11 +633,14 @@ export function migratePublication(pub: Publication): Publication {
     for (const h of pub.hotSpots) {
         h.venues ??= [];
         h.hallId ??= '';
+        h.worldTableId ??= '';
+        h.facts = Array.isArray(h.facts) ? h.facts : [];
     }
     for (const c of pub.contracts) {
         c.tempHirePilotIds ??= [];
         c.variantId ??= '';
         c.mapId ??= '';
+        c.repairTime ??= '';
     }
     for (const f of pub.factions) for (const pc of f.parents || []) {
         pc.id ||= uid('pc');

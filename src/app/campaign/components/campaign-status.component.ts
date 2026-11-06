@@ -3,7 +3,9 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { DAMAGE_LABEL, type Campaign } from '../core/campaign.model';
 import { stepLabel, TERMS, TERM_LABEL } from '../core/engine';
-import { fmt } from '../core/runner';
+import type { Publication } from '../core/publication.model';
+import { betweenNow, fmt } from '../core/runner';
+import { contractConditions } from '../core/track';
 
 /** Read-only campaign state: money, contract, units, pilots and ledger. */
 @Component({
@@ -28,6 +30,15 @@ import { fmt } from '../core/runner';
                 </div>
             } @else {
                 <h3>No contract</h3>
+            }
+            @if (conditions().length) {
+                <div class="cp-terms">
+                    @for (x of conditions(); track $index) { <span><span class="cp-label">{{ x.label }}</span>{{ x.value }}</span> }
+                </div>
+            }
+            @if (events().length) {
+                <h4>Track events in force</h4>
+                <ul class="cp-list">@for (e of events(); track $index) { <li class="cp-warn">{{ e }}</li> }</ul>
             }
         </section>
 
@@ -90,6 +101,7 @@ export class CampaignStatusComponent {
     readonly campaign = input.required<Campaign>();
     /** Display label for a MekBay unit name. */
     readonly labelOf = input<(unit: string) => string>(u => u);
+    readonly pub = input<Publication | null>(null);
     readonly assignPilot = output<{ cuId: string; pilotId: string }>();
     readonly removeUnit = output<string>();
 
@@ -98,6 +110,11 @@ export class CampaignStatusComponent {
     protected readonly terms = TERMS;
     protected readonly termLabel = TERM_LABEL;
     protected readonly step = stepLabel;
+    protected readonly conditions = computed(() => {
+        const pub = this.pub();
+        return pub ? contractConditions(this.campaign(), pub) : [];
+    });
+    protected readonly events = computed(() => betweenNow(this.campaign())?.labels ?? []);
     protected readonly activePilots = computed(() => this.campaign().pilots.filter(p => p.status === 'active'));
     /** Newest first. */
     // ponytail: core writes MekBay unit ids (e.g. BMLocust_LCT1V) into ledger text; ids carry
