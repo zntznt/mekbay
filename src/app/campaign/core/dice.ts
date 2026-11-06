@@ -27,11 +27,19 @@ export interface RowRange {
 }
 
 /** Die expressions: "1D6", "2D6+1", "3D6", "1D6-2", "D6", "12" (flat). Case-insensitive. */
+const MAX_DICE = 100;
+const MAX_SIDES = 1000;
+
 export function parseDie(expr: string | null | undefined): ParsedDie | null {
     const s = String(expr ?? '').replace(/\s+/g, '').toUpperCase();
     if (!s) return null;
     const m = /^(\d*)D(\d+)([+-]\d+)?$/.exec(s);
-    if (m) return { n: Number(m[1] || 1), sides: Number(m[2]), mod: Number(m[3] || 0) };
+    if (m) {
+        const n = Number(m[1] || 1), sides = Number(m[2]);
+        // Publications are imported files: bound the dice so a typo can't hang the tab.
+        if (n > MAX_DICE || sides > MAX_SIDES) return null;
+        return { n, sides, mod: Number(m[3] || 0) };
+    }
     if (/^[+-]?\d+$/.test(s)) return { n: 0, sides: 0, mod: Number(s) };
     return null;
 }

@@ -158,3 +158,15 @@ describe('contract math', () => {
         expect(combatPay('success', 1, { o: { combatPayMult: 0.25 } })).toBe(125);
     });
 });
+
+describe('imported-data guards', () => {
+    it('rejects absurd dice instead of looping over them', () => {
+        expect(parseDie('100000000D6')).toBeNull();
+        expect(parseDie('2D100000')).toBeNull();
+        expect(parseDie('2D6+1')).toEqual({ n: 2, sides: 6, mod: 1 });
+    });
+    it('resolves a non-numeric step without hanging', () => {
+        expect(resolveStep('basePay', NaN)).toBe(7);
+        expect(resolveStep('basePay', 3.6)).toBe(resolveStep('basePay', 3));
+    });
+});

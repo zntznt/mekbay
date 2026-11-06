@@ -52,8 +52,9 @@ export function selectableSteps(term: TermKey): number[] {
 }
 /** An em-dash step resolves to the next step closer to 7. */
 export function resolveStep(term: TermKey, step: number): number {
-    let s = Math.max(0, Math.min(MAX_STEP, step));
-    while (!selectable(term, s)) s += s < 7 ? 1 : -1;
+    // Steps come from imported publications: a non-number would never become selectable.
+    let s = Number.isFinite(step) ? Math.trunc(Math.max(0, Math.min(MAX_STEP, step))) : 7;
+    for (let i = 0; i <= MAX_STEP && !selectable(term, s); i++) s += s < 7 ? 1 : -1;
     return s;
 }
 export function pct(term: TermKey, step: number): number {
