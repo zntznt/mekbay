@@ -22,6 +22,15 @@ interface Ctx {
 }
 
 const MAX_DEPTH = 8;
+// Publications are imported files: count/times fan-out can multiply past MAX_DEPTH, so cap total output too.
+const MAX_LOG = 500;
+const STOPPED = 'Stopped: too many rolls';
+/** True once the budget is used up; notes it once in the log. */
+function spent(log: RollLogLine[]): boolean {
+    if (log.length < MAX_LOG) return false;
+    if (log[log.length - 1]?.text !== STOPPED) log.push({ depth: 0, text: STOPPED });
+    return true;
+}
 
 function describe(res: TableResult, ctx: Ctx): string {
     const { pub, system } = ctx;
@@ -55,7 +64,7 @@ function resolve(res: TableResult | undefined, ctx: Ctx, depth: number, log: Rol
         case 'pointer': {
             log.push({ depth, text: describe(res, ctx) });
             const next = byId(ctx.pub, 'tables', res.tableId);
-            for (let i = 0; next && i < (res.count || 1); i++) rollOn(next, { ...ctx, modifier: ctx.subModifier || 0, column: res.column || ctx.column }, depth + 1, log);
+            for (let i = 0; next && i < (res.count || 1) && !spent(log); i++) rollOn(next, { ...ctx, modifier: ctx.subModifier || 0, column: res.column || ctx.column }, depth + 1, log);
             return;
         }
         case 'count': {
@@ -63,7 +72,7 @@ function resolve(res: TableResult | undefined, ctx: Ctx, depth: number, log: Rol
             const n = [...res.thresholds].sort((a, b) => b.min - a.min).find(x => r >= x.min)?.count ?? 0;
             log.push({ depth, text: `${res.die} → ${r}: ${n} roll(s)` });
             const next = byId(ctx.pub, 'tables', res.tableId);
-            for (let i = 0; next && i < n; i++) rollOn(next, { ...ctx, modifier: 0 }, depth + 1, log);
+            for (let i = 0; next && i < n && !spent(log); i++) rollOn(next, { ...ctx, modifier: 0 }, depth + 1, log);
             return;
         }
         case 'nested': {
@@ -85,7 +94,7 @@ function resolve(res: TableResult | undefined, ctx: Ctx, depth: number, log: Rol
                 }
                 return null;
             };
-            for (let i = 0; i < res.times; i++) {
+            for (let i = 0; i < res.times && !spent(log); i++) {
                 let p = pick();
                 for (let g = 0; p && seen.has(p.row) && (res.dup === 'reroll' || res.dup === 'rerollUntil') && g < 30; g++) p = pick();
                 if (!p) {
@@ -108,6 +117,7 @@ function resolve(res: TableResult | undefined, ctx: Ctx, depth: number, log: Rol
 }
 
 function rollOn(t: Table, ctx: Ctx, depth: number, log: RollLogLine[]): void {
+    if (spent(log)) return;
     if (depth > MAX_DEPTH) {
         log.push({ depth, text: 'Stopped: too many nested rolls' });
         return;
