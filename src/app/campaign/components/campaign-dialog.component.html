@@ -127,6 +127,15 @@
                                 </div>
                             }
                         </section>
+                    } @else if (c.contract?.map && svc.env(); as env) {
+                        <map-panel [campaign]="c" [env]="env" [labelOf]="svc.unitLabel"
+                            (land)="confirmLanding($event)" (enemyLz)="svc.setEnemyLz($event)"
+                            (addGroup)="svc.addGroup()" (edit)="svc.editGroup($event.gid, $event)" (removeGroup)="svc.removeGroup($event)"
+                            (beginTurns)="svc.beginMapTurns()" (move)="svc.moveGroup($event.gid, $event.to)" (stay)="svc.stayGroup($event)"
+                            (addEnemy)="svc.addEnemy($event)" (moveEnemy)="svc.moveEnemy($event.eid, $event.to)" (removeEnemy)="svc.removeEnemy($event)"
+                            (reinforce)="confirmReinforce($event)" (endTurn)="svc.endMapTurn($event)" (setWinner)="svc.setMapWinner($event)"
+                            (finalBattle)="svc.startFinalBattle()" (joinDefense)="svc.joinDefense($event)" (withdraw)="svc.withdrawFromBattle()" />
+                        <ng-container *ngTemplateOutlet="draftCard" />
                     } @else {
                         <section class="cp-card">
                             <h3>Month {{ c.contract.month }}</h3>
@@ -161,6 +170,10 @@
                             } @else { <p class="cp-muted">This contract has no mission brief.</p> }
                         </section>
 
+                        <ng-container *ngTemplateOutlet="draftCard" />
+                    }
+
+                    <ng-template #draftCard>
                         @if (c.draft; as d) {
                             <section class="cp-card">
                                 <h3>{{ d.name }} <small>Scale {{ d.scale }}</small></h3>
@@ -202,10 +215,10 @@
                                 }
                             </section>
                             @if (svc.force(); as f) {
-                                @if (f.ok) { <track-result-form [force]="f" [labelOf]="svc.unitLabel" [side]="c.contract.side" (apply)="applyResult($event)" /> }
+                                @if (f.ok) { <track-result-form [force]="f" [labelOf]="svc.unitLabel" [side]="c.contract!.side" (apply)="applyResult($event)" /> }
                             }
                         }
-                    }
+                    </ng-template>
 
                     @if (!c.setup && !c.draft && svc.env(); as env) {
                         <section class="cp-card">

@@ -95,6 +95,25 @@ export function migrateCampaign(c: Campaign): Campaign {
         p.scas ||= [];
     }
     for (const u of c.units) u.crew ||= { kind: 'regular', wounds: 0 };
+    const ms = c.contract?.map;
+    if (ms) {
+        // The workshop had a separate 'formations' phase; here formations are organised while landing.
+        if (ms.phase !== 'turns' && ms.phase !== 'ended') ms.phase = 'landing';
+        ms.owner ||= {};
+        ms.groups ||= [];
+        ms.enemy ||= [];
+        ms.lzEffects ||= [];
+        ms.hold ||= { us: 0, them: 0 };
+        ms.fought ||= {};
+        ms.notes ||= [];
+        ms.battle ??= null;
+        ms.ended ??= null;
+        ms.battles ??= 0;
+        ms.reinforcements ??= 0;
+        ms.finalDone ??= false;
+        for (const k of ['lzHex', 'lzGroup', 'enemyLz'] as const) ms[k] ??= '';
+        for (const g of ms.groups) g.unitIds ||= [];
+    }
     return c;
 }
 

@@ -31,9 +31,12 @@ export function hexDist(a: string, b: string): number {
     const B = cube(b);
     return (Math.abs(A.q - B.q) + Math.abs(A.r - B.r) + Math.abs(A.s - B.s)) / 2;
 }
+/** Hex ids have two digits per axis, so a side is 1–99 hexes; imported sizes are clamped to that. */
+export const MAX_MAP_SIDE = 99;
+const side = (n: unknown): number => Math.min(MAX_MAP_SIDE, Math.max(1, Math.floor(Number(n)) || 1));
 export function inMap(map: Pick<CampaignMap, 'cols' | 'rows'>, id: string): boolean {
     const { col, row } = parseHex(id);
-    return col >= 1 && row >= 1 && col <= map.cols && row <= map.rows;
+    return col >= 1 && row >= 1 && col <= side(map.cols) && row <= side(map.rows);
 }
 export function neighbors(map: Pick<CampaignMap, 'cols' | 'rows'>, id: string): string[] {
     const { col, row } = parseHex(id);
@@ -49,7 +52,7 @@ export function neighbors(map: Pick<CampaignMap, 'cols' | 'rows'>, id: string): 
 }
 export function allHexes(map: Pick<CampaignMap, 'cols' | 'rows'>): string[] {
     const out: string[] = [];
-    for (let c = 1; c <= map.cols; c++) for (let r = 1; r <= map.rows; r++) out.push(hexId(c, r));
+    for (let c = 1; c <= side(map.cols); c++) for (let r = 1; r <= side(map.rows); r++) out.push(hexId(c, r));
     return out;
 }
 const SQ3 = Math.sqrt(3);
@@ -66,11 +69,14 @@ export function hexPoints(cx: number, cy: number, size: number): string {
     }).join(' ');
 }
 export function mapPixelSize(map: Pick<CampaignMap, 'cols' | 'rows'>, size: number): { w: number; h: number } {
-    return { w: size * (1.5 * (map.cols - 1) + 2), h: SQ3 * size * (map.rows + 0.5) };
+    return { w: size * (1.5 * (side(map.cols) - 1) + 2), h: SQ3 * size * (side(map.rows) + 0.5) };
 }
+// ponytail: keyed on the hexTypes array; play never edits a map in place, so the index never goes stale.
+const typeIndex = new WeakMap<HexType[], Map<string, HexType>>();
 export function hexType(map: CampaignMap, id: string): HexType {
-    const t = map.hexes[id]?.t || HEX_DEFAULT;
-    return map.hexTypes.find(x => x.id === t) || map.hexTypes[0];
+    let idx = typeIndex.get(map.hexTypes);
+    if (!idx) typeIndex.set(map.hexTypes, (idx = new Map(map.hexTypes.map(x => [x.id, x]))));
+    return idx.get(map.hexes[id]?.t || HEX_DEFAULT) || map.hexTypes[0];
 }
 export const hexName = (map: CampaignMap, id: string): string => map.hexes[id]?.name || '';
 export const isNamed = (map: CampaignMap, id: string): boolean => (map.hexes[id]?.t || HEX_DEFAULT) !== HEX_DEFAULT;
@@ -81,28 +87,36 @@ export interface PathOptions {
     /** Hexes that can be the destination but not passed through. */
     stopOnly?: (id: string) => boolean;
 }
-/** Shortest path length from a to b within maxSteps, or null. */
-export function pathLength(map: CampaignMap, a: string, b: string, maxSteps: number, opts: PathOptions = {}): number | null {
+/**
+ * Hexes reachable from `a` within maxSteps, with their step counts. Blocked and
+ * stop-only hexes can be the destination but are not passed through. One BFS,
+ * bounded by the map's hex count whatever maxSteps says.
+ */
+export function reachable(map: CampaignMap, a: string, maxSteps: number, opts: PathOptions = {}): Map<string, number> {
     const blocked = opts.blocked ?? (() => false);
     const stopOnly = opts.stopOnly ?? (() => false);
-    if (a === b) return 0;
+    const out = new Map<string, number>();
     const seen = new Set([a]);
     let frontier = [a];
-    for (let step = 1; step <= maxSteps; step++) {
+    for (let step = 1; step <= maxSteps && frontier.length; step++) {
         const next: string[] = [];
         for (const h of frontier) {
             for (const n of neighbors(map, h)) {
                 if (seen.has(n)) continue;
                 seen.add(n);
                 if (hexType(map, n).impassable) continue;
-                if (n === b) return step;
+                out.set(n, step);
                 if (blocked(n) || stopOnly(n)) continue;
                 next.push(n);
             }
         }
         frontier = next;
     }
-    return null;
+    return out;
+}
+/** Shortest path length from a to b within maxSteps, or null. */
+export function pathLength(map: CampaignMap, a: string, b: string, maxSteps: number, opts: PathOptions = {}): number | null {
+    return a === b ? 0 : (reachable(map, a, maxSteps, opts).get(b) ?? null);
 }
 
 // ---------- map state ----------

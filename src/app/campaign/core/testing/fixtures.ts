@@ -8,7 +8,7 @@
 import { GameSystem } from '../../../models/common.model';
 import type { RunnerEnv } from '../campaign.model';
 import { seededRng } from '../dice';
-import { newBrief, newContract, newPublication, newTable, newTrack, type BriefNode, type Publication } from '../publication.model';
+import { newBrief, newCampaignMap, newContract, newHexType, newPublication, newTable, newTrack, type BriefNode, type CampaignMap, type Publication } from '../publication.model';
 import { unitLookupFrom, type CampaignUnitData } from '../units';
 
 const unit = (name: string, chassis: string, model: string, o: Partial<CampaignUnitData> & { pv: number; sz: number }): CampaignUnitData => ({
@@ -137,6 +137,42 @@ export function makePublication(): Publication {
         id: 'hs_glass', name: 'Testworld', contractIds: [ct.id], briefIds: [brief.id], tableIds: [], availability: { from: '', to: '' },
         venues: [], hallId: 'hh_test', worldTableId: world.id, facts: [{ label: 'Ruler', value: 'Rank 5' }],
     });
+    return pub;
+}
+
+/**
+ * "Test Atoll": an invented 8×6 campaign map. Landing zones at 0101 (west) and
+ * 0801 (east); a town (0302) whose income a west landing cuts by 1D6 × 10%;
+ * a strategic point (0503); a fort (0402) that garrisons; water at 0303/0403.
+ */
+export function makeMap(): CampaignMap {
+    const m = newCampaignMap();
+    const ty = (id: string, name: string, o: Partial<CampaignMap['hexTypes'][number]>) => ({ ...newHexType(name), id, ...o });
+    m.id = 'mp_atoll';
+    m.name = 'Test Atoll';
+    m.cols = 8;
+    m.rows = 6;
+    m.hexTypes[0].trackId = 'tr_strike';
+    m.hexTypes.push(
+        ty('hx_base', 'Base', { lz: 'base', hq: true, trackId: 'tr_hold', lzEffects: [{ kind: 'incomePct', target: 'hx_town', die: '1D6', mult: 10, sign: -1 }] }),
+        ty('hx_town', 'Town', { income: 300, trackId: 'tr_strike' }),
+        ty('hx_point', 'Point', { income: 100, strategic: true, trackId: 'tr_hold' }),
+        ty('hx_fort', 'Fort', { income: 50, trackId: 'tr_hold', effects: [{ kind: 'garrison' }] }),
+    );
+    m.hexes = {
+        '0101': { t: 'hx_base', end: 'west' }, '0801': { t: 'hx_base', end: 'east' },
+        '0302': { t: 'hx_town', name: 'Port' }, '0503': { t: 'hx_point' }, '0402': { t: 'hx_fort' },
+        '0303': { t: 'hx_water' }, '0403': { t: 'hx_water' },
+    };
+    Object.assign(m.rules, { turns: 4, maxGroups: 2, groupSize: 3, bspPerScale: 10, reinforcements: 1 });
+    m.rules.final.trackId = 'tr_hold';
+    return m;
+}
+/** The test publication plus a contract played on the Test Atoll map. */
+export function makeMapPublication(): Publication {
+    const pub = makePublication();
+    pub.maps.push(makeMap());
+    pub.contracts.push({ ...newContract(), id: 'ct_atoll', name: 'Atoll campaign', employer: 'Test Employer', length: 4, mapId: 'mp_atoll' });
     return pub;
 }
 

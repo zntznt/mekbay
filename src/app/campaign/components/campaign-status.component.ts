@@ -6,6 +6,7 @@ import { stepLabel, TERMS, TERM_LABEL } from '../core/engine';
 import type { Publication } from '../core/publication.model';
 import { betweenNow, fmt } from '../core/runner';
 import { contractConditions } from '../core/track';
+import { hexIncome } from '../core/hex-map';
 
 /** Read-only campaign state: money, contract, units, pilots and ledger. */
 @Component({
@@ -28,6 +29,15 @@ import { contractConditions } from '../core/track';
                 <div class="cp-terms">
                     @for (t of terms; track t) { <span><span class="cp-label">{{ termLabel[t] }}</span>{{ step(t, ct.terms[t]) }}</span> }
                 </div>
+                @if (mapStatus(); as m) {
+                    <div class="cp-terms">
+                        <span><span class="cp-label">Map</span>{{ m.phase }}</span>
+                        <span><span class="cp-label">Income / turn</span>{{ fmt(m.income) }} SP</span>
+                        <span><span class="cp-label">Hexes held</span>{{ m.us }} (opponent {{ m.them }})</span>
+                        <span><span class="cp-label">Reinforcements</span>{{ m.reinforcements }}</span>
+                        @if (m.hold) { <span><span class="cp-label">Strategic points</span>{{ m.hold }}</span> }
+                    </div>
+                }
             } @else {
                 <h3>No contract</h3>
             }
@@ -113,6 +123,21 @@ export class CampaignStatusComponent {
     protected readonly conditions = computed(() => {
         const pub = this.pub();
         return pub ? contractConditions(this.campaign(), pub) : [];
+    });
+    protected readonly mapStatus = computed(() => {
+        const c = this.campaign();
+        const pub = this.pub();
+        const ms = c.contract?.map;
+        if (!ms || !pub) return null;
+        const held = Object.values(ms.owner);
+        return {
+            phase: ms.phase === 'turns' ? `turn ${c.contract!.month}/${c.contract!.length}` : ms.phase,
+            income: hexIncome(c, pub).total,
+            us: held.filter(x => x === 'us').length,
+            them: held.filter(x => x === 'them').length,
+            reinforcements: ms.reinforcements,
+            hold: ms.hold.us ? `held ${ms.hold.us} turn(s)` : ms.hold.them ? `opponent ${ms.hold.them} turn(s)` : '',
+        };
     });
     protected readonly events = computed(() => betweenNow(this.campaign())?.labels ?? []);
     protected readonly activePilots = computed(() => this.campaign().pilots.filter(p => p.status === 'active'));

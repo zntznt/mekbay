@@ -654,9 +654,18 @@ export function migratePublication(pub: Publication): Publication {
         pc.units ||= [];
         pc.scaIds ||= [];
     }
+    const mapDefaults = newCampaignMap();
     for (const m of pub.maps) {
+        m.cols ??= mapDefaults.cols;
+        m.rows ??= mapDefaults.rows;
+        m.image ??= '';
         m.hexes ||= {};
         m.hexTypes ||= [];
+        if (!m.hexTypes.length) m.hexTypes.push(mapDefaults.hexTypes[0]);
+        m.rules = { ...mapDefaults.rules, ...m.rules };
+        m.rules.victory = { ...mapDefaults.rules.victory, ...m.rules.victory };
+        m.rules.final = { ...mapDefaults.rules.final, ...m.rules.final };
+        m.rules.final.payouts ||= [];
         for (const t of m.hexTypes) {
             t.effects ||= [];
             t.lzEffects ||= [];

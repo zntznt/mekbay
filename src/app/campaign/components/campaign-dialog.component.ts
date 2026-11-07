@@ -11,9 +11,11 @@ import { sellQuote } from '../core/market';
 import { selectableSteps, stepLabel, TERMS, TERM_LABEL, type TermKey, type Terms } from '../core/engine';
 import type { PlanItem } from '../core/script';
 import { availableContracts, fmt, period } from '../core/runner';
+import { hexName, hexType, mapOf } from '../core/hex-map';
 import { trackEventTables, unitAvailable } from '../core/track';
 import { BriefFlowComponent } from './brief-flow.component';
 import { CampaignStatusComponent } from './campaign-status.component';
+import { MapPanelComponent } from './map-panel.component';
 import { MarketPanelComponent } from './market-panel.component';
 import { PilotsPanelComponent } from './pilots-panel.component';
 import { RepairsPanelComponent } from './repairs-panel.component';
@@ -26,7 +28,7 @@ const SYSTEM_LABEL: Record<GameSystem, string> = { [GameSystem.CLASSIC]: 'Classi
 @Component({
     selector: 'campaign-dialog',
     changeDetection: ChangeDetectionStrategy.OnPush,
-    imports: [NgTemplateOutlet, BriefFlowComponent, CampaignStatusComponent, MarketPanelComponent, PilotsPanelComponent, RepairsPanelComponent, SalvagePanelComponent, TrackResultFormComponent],
+    imports: [NgTemplateOutlet, BriefFlowComponent, CampaignStatusComponent, MapPanelComponent, MarketPanelComponent, PilotsPanelComponent, RepairsPanelComponent, SalvagePanelComponent, TrackResultFormComponent],
     host: { class: 'fullscreen-dialog-host nopadding fullheight tv-fade' },
     templateUrl: './campaign-dialog.component.html',
     styleUrls: ['./campaign.shared.scss', './campaign-dialog.component.scss'],
@@ -184,6 +186,26 @@ export class CampaignDialogComponent {
             ? `Remove ${name} from the starting force?`
             : `Sell ${name} for ${fmt(sellQuote(c, env, cu))} SP${cu.state !== 'ok' ? ` (${DAMAGE_LABEL[cu.state].toLowerCase()}, half price)` : ''}? This cannot be undone.`;
         if (await this.dialogs.requestConfirmation(msg, c.setup ? 'Remove unit' : 'Sell unit', 'warning')) await this.svc.removeUnit(cuId);
+    }
+    protected async confirmLanding(hex: string): Promise<void> {
+        const c = this.svc.campaign();
+        const map = c && this.svc.pub() ? mapOf(c, this.svc.pub()!) : undefined;
+        if (!map) return;
+        const t = hexType(map, hex);
+        if (!t.lz) {
+            void this.svc.landAt(hex); // let the core say why not
+            return;
+        }
+        const fx = t.lzEffects.length ? ' Its landing effects are rolled now.' : '';
+        if (await this.dialogs.requestConfirmation(`Land at ${hexName(map, hex) || t.name} (${hex})? The landing zone cannot be changed.${fx}`, 'Land', 'warning')) await this.svc.landAt(hex);
+    }
+    protected async confirmReinforce(cuId: string): Promise<void> {
+        const c = this.svc.campaign();
+        const cu = c?.units.find(u => u.id === cuId);
+        const left = c?.contract?.map?.reinforcements ?? 0;
+        if (!cu) return;
+        const name = cu.name || this.svc.unitLabel(cu.unit);
+        if (await this.dialogs.requestConfirmation(`Replace ${name} with a fresh unit? Uses 1 of ${left} strategic reinforcement(s); it arrives at the landing zone next map turn.`, 'Strategic reinforcement', 'warning')) await this.svc.reinforce(cuId);
     }
     protected async setSponsor(id: string): Promise<void> {
         if (!id && !(await this.dialogs.requestConfirmation('End the sponsorship? The sponsor will never deal with you again; undelivered orders are refunded.', 'End sponsorship', 'danger'))) return;

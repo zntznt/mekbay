@@ -22,7 +22,12 @@ import {
 } from './core/runner';
 import { declineOffer, generateOffer, offerSource, signOffer } from './core/offer';
 import { briefFlow, loopDecision, makeChoice, monthPlan, nextItem, rollRandomNode, type PlanItem } from './core/script';
-import { applyTrack, cancelTrack, rollComplications, startTrack, trackForce } from './core/track';
+import { addDefenders, applyTrack, cancelTrack, rollComplications, startFinalBattle, startTrack, trackForce, withdrawFromBattle } from './core/track';
+import {
+    addEnemy, addGroup, beginMapTurns, editGroup, endMapTurn, landAt, moveEnemy, moveGroup, reinforceUnit, removeEnemy, removeGroup, setEnemyLz,
+    setMapWinner, stayGroup,
+} from './core/map-play';
+import type { MapSide } from './core/campaign.model';
 import type { UnitLookup } from './core/units';
 import { validate, type Issue } from './core/validate';
 
@@ -31,6 +36,11 @@ function fieldUnits(c: Campaign, ids: string[]): void {
     const granted = new Set(c.units.filter(u => u.granted).map(u => u.id));
     c.draft.unitIds = ids.filter(id => !granted.has(id));
     c.draft.grantedIds = ids.filter(id => granted.has(id));
+}
+
+/** A map battle fields a formation's units, granted ones included; file them where the track form expects. */
+function splitGranted(c: Campaign): void {
+    if (c.draft) fieldUnits(c, [...c.draft.unitIds, ...c.draft.grantedIds]);
 }
 
 /**
@@ -306,6 +316,32 @@ export class CampaignService {
     orderFromSponsor(unit: string, zone: DeliveryZone) { return this.act((c, env) => void buyFromSponsor(c, env, unit, zone)); }
     goToHall(hallId: string) { return this.act((c, env) => goToHall(c, env, hallId)); }
     collectDelivery(cuId: string) { return this.act(c => collectDelivery(c, cuId)); }
+
+    // ---------- campaign map ----------
+
+    landAt(hex: string) { return this.act((c, env) => landAt(c, env, hex)); }
+    setEnemyLz(hex: string) { return this.act((c, env) => setEnemyLz(c, env, hex)); }
+    addGroup(name = '') { return this.act((c, env) => void addGroup(c, env, name, [])); }
+    editGroup(gid: string, patch: { name?: string; unitIds?: string[]; bsp?: number }) { return this.act((c, env) => editGroup(c, env, gid, patch)); }
+    removeGroup(gid: string) { return this.act((c, env) => removeGroup(c, env, gid)); }
+    beginMapTurns() { return this.act((c, env) => beginMapTurns(c, env)); }
+    /** Move a formation; moving onto the opponent sets up the battle as the current track. */
+    moveGroup(gid: string, to: string) { return this.act((c, env) => (moveGroup(c, env, gid, to), splitGranted(c))); }
+    stayGroup(gid: string) { return this.act((c, env) => stayGroup(c, env, gid)); }
+    addEnemy(name: string) { return this.act((c, env) => addEnemy(c, env, name)); }
+    moveEnemy(eid: string, to: string) { return this.act((c, env) => (moveEnemy(c, env, eid, to), splitGranted(c))); }
+    removeEnemy(eid: string) { return this.act((c, env) => removeEnemy(c, env, eid)); }
+    reinforce(cuId: string) { return this.act((c, env) => reinforceUnit(c, env, cuId)); }
+    endMapTurn(designated: number) { return this.act((c, env) => void endMapTurn(c, env, { designated })); }
+    setMapWinner(side: MapSide) { return this.act((c, env) => setMapWinner(c, env, side)); }
+    startFinalBattle() {
+        return this.act((c, env) => {
+            startFinalBattle(c, env);
+            splitGranted(c);
+        });
+    }
+    joinDefense(gid: string) { return this.act((c, env) => (addDefenders(c, env, gid), splitGranted(c))); }
+    withdrawFromBattle() { return this.act((c, env) => withdrawFromBattle(c, env)); }
 
     // ---------- plumbing ----------
 

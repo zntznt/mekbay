@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { RuleError, type Campaign, type MapSide, type RunnerEnv } from './campaign.model';
+import { isGone, RuleError, type Campaign, type MapGroup, type MapSide, type MapState, type RunnerEnv } from './campaign.model';
 import { roll } from './dice';
 import { ECON, purchasePrice } from './engine';
-import { describeEffect, effectsOf, enemyAt, groupAt, groupChecks, groupMove, hexIncome, hexName, hexType, isNamed, pathLength, resolveLzEffects } from './hex-map';
+import { describeEffect, effectsOf, enemyAt, groupAt, groupChecks, groupMove, hexIncome, hexName, hexType, isNamed, reachable, resolveLzEffects } from './hex-map';
 import { isBAPilot } from './pilots';
 import { uid } from './publication.model';
 import { repairQuote } from './market';
@@ -18,7 +18,7 @@ import { mapCtx, startMapBattle } from './track';
 
 export function landAt(c: Campaign, env: RunnerEnv, hex: string): void {
     const { ms, map } = mapCtx(c, env);
-    if (ms.phase !== 'landing') throw new RuleError('Already landed.');
+    if (ms.phase !== 'landing' || ms.lzHex) throw new RuleError('Already landed.');
     const t = hexType(map, hex);
     if (!t.lz) throw new RuleError('That hex is not a landing zone.');
     if (ms.enemyLz && ms.enemyLz === hex) throw new RuleError('The opponent landed there.');
@@ -34,16 +34,63 @@ export function landAt(c: Campaign, env: RunnerEnv, hex: string): void {
 }
 export function setEnemyLz(c: Campaign, env: RunnerEnv, hex: string): void {
     const { ms, map } = mapCtx(c, env);
+    if (ms.phase !== 'landing') throw new RuleError('Already landed.');
+    if (ms.enemyLz) delete ms.owner[ms.enemyLz];
     if (!hexType(map, hex).lz) throw new RuleError('That hex is not a landing zone.');
     if (ms.lzHex && ms.lzGroup && (map.hexes[hex]?.end || '') === ms.lzGroup) throw new RuleError('The opponent lands on the other end of the map.');
     ms.enemyLz = hex;
     ms.owner[hex] = 'them';
 }
-export function addGroup(c: Campaign, env: RunnerEnv, name: string, unitIds: string[], bsp = 0) {
-    const { ms } = mapCtx(c, env);
-    const g = { id: uid('fg'), name: name || `Formation ${ms.groups.length + 1}`, hex: ms.lzHex, unitIds: [...unitIds], bsp, moved: false };
+/** Formations are organised while landing, and at the start of a map turn before anything moves. */
+function canReorganise(c: Campaign, ms: MapState): void {
+    if (c.draft) throw new RuleError('Finish the battle in progress first.');
+    if (ms.phase === 'ended') throw new RuleError('The map campaign is over.');
+    if (ms.phase === 'turns' && (ms.groups.some(g => g.moved) || ms.enemy.some(e => e.moved))) {
+        throw new RuleError('Formations can be split or merged only at the start of a map turn, before anything moves.');
+    }
+}
+export function addGroup(c: Campaign, env: RunnerEnv, name: string, unitIds: string[], bsp = 0): MapGroup {
+    const { ms, R } = mapCtx(c, env);
+    canReorganise(c, ms);
+    if (ms.groups.length >= R.maxGroups) throw new RuleError(`The maximum is ${R.maxGroups} formations.`);
+    const g: MapGroup = { id: uid('fg'), name: name || `Formation ${ms.groups.length + 1}`, hex: ms.lzHex, unitIds: [], bsp: 0, moved: false };
     ms.groups.push(g);
+    editGroup(c, env, g.id, { unitIds, bsp });
     return g;
+}
+/** Rename a formation, change its units (own units not in another formation) or its BSP share. */
+export function editGroup(c: Campaign, env: RunnerEnv, gid: string, patch: { name?: string; unitIds?: string[]; bsp?: number }): void {
+    const { ms, R, ct } = mapCtx(c, env);
+    canReorganise(c, ms);
+    const g = ms.groups.find(x => x.id === gid);
+    if (!g) throw new RuleError('No such formation.');
+    if (patch.name != null) g.name = patch.name.trim() || g.name;
+    if (patch.bsp != null) {
+        const v = Number(patch.bsp);
+        if (!Number.isInteger(v) || v < 0) throw new RuleError('BSP must be a whole number, 0 or more.');
+        g.bsp = v;
+    }
+    if (patch.unitIds) {
+        const ids = [...new Set(patch.unitIds)];
+        if (ids.length > R.groupSize) throw new RuleError(`${g.name}: the maximum is ${R.groupSize} units.`);
+        for (const id of ids) {
+            const cu = c.units.find(u => u.id === id);
+            if (!cu || cu.tempHire || isGone(cu.state)) throw new RuleError('That unit cannot join a formation.');
+            if (cu.arrives && ct.month < cu.arrives) throw new RuleError(`That unit arrives at the landing zone on turn ${cu.arrives}.`);
+            const other = ms.groups.find(x => x !== g && x.unitIds.includes(id));
+            if (other) throw new RuleError(`That unit is already in ${other.name}.`);
+        }
+        // A formation reorganised mid-campaign forms up at the landing zone.
+        if (ms.phase === 'turns' && ids.some(id => !g.unitIds.includes(id)) && g.hex !== ms.lzHex) {
+            throw new RuleError(`${g.name} is away from the landing zone; new units join a formation there.`);
+        }
+        g.unitIds = ids;
+    }
+}
+export function removeGroup(c: Campaign, env: RunnerEnv, gid: string): void {
+    const { ms } = mapCtx(c, env);
+    canReorganise(c, ms);
+    ms.groups = ms.groups.filter(g => g.id !== gid);
 }
 export function beginMapTurns(c: Campaign, env: RunnerEnv): void {
     const { ms } = mapCtx(c, env);
@@ -57,6 +104,14 @@ export function beginMapTurns(c: Campaign, env: RunnerEnv): void {
     }
     ms.phase = 'turns';
 }
+/** Where a formation can move this turn, with the hexes it takes. Enemy hexes end the move (a battle). */
+export function legalMoves(c: Campaign, env: RunnerEnv, gid: string): Map<string, number> {
+    const { ms, map } = mapCtx(c, env);
+    const g = ms.groups.find(x => x.id === gid);
+    if (ms.phase !== 'turns' || !g || !g.unitIds.length || g.moved || c.draft) return new Map();
+    const blocked = (h: string) => !!enemyAt(ms, h) || h === ms.enemyLz;
+    return reachable(map, g.hex, groupMove(c, env, g), { blocked });
+}
 export function moveGroup(c: Campaign, env: RunnerEnv, gid: string, to: string) {
     const { ms, map, R } = mapCtx(c, env);
     if (ms.phase !== 'turns') throw new RuleError('Map turns have not started.');
@@ -66,9 +121,8 @@ export function moveGroup(c: Campaign, env: RunnerEnv, gid: string, to: string) 
     if (g.moved) throw new RuleError(`${g.name} has already moved this turn.`);
     const t = hexType(map, to);
     if (t.impassable) throw new RuleError(`${t.name} can't be entered.`);
-    const mp = groupMove(c, env, g);
-    const steps = pathLength(map, g.hex, to, mp, { blocked: h => !!enemyAt(ms, h) });
-    if (steps == null) throw new RuleError(`${g.name} moves ${mp} hexes; ${to} is out of reach${ms.enemy.some(e => !e.gone) ? ' (enemy formations and impassable hexes block the way)' : ''}.`);
+    const steps = legalMoves(c, env, gid).get(to);
+    if (steps == null) throw new RuleError(`${g.name} moves ${groupMove(c, env, g)} hexes; ${to} is out of reach${ms.enemy.some(e => !e.gone) ? ' (enemy formations and impassable hexes block the way)' : ''}.`);
     const foe = enemyAt(ms, to) || (to === ms.enemyLz ? { id: 'hq' } : null);
     if (foe) return startMapBattle(c, env, { hex: to, from: g.hex, groupId: g.id, enemyId: foe.id, ourRole: 'attacker' });
     const mate = groupAt(ms, to);
@@ -94,6 +148,7 @@ export function stayGroup(c: Campaign, env: RunnerEnv, gid: string): void {
 /** Opponent formations are markers moved by the player (or a GM, or an opponent module). */
 export function addEnemy(c: Campaign, env: RunnerEnv, name: string, hex = ''): void {
     const { ms } = mapCtx(c, env);
+    if (!ms.enemyLz) throw new RuleError("Set the opponent's landing zone first.");
     ms.enemy.push({ id: uid('en'), name: name || `Enemy ${ms.enemy.length + 1}`, hex: hex || ms.enemyLz, moved: false, note: '' });
 }
 export function moveEnemy(c: Campaign, env: RunnerEnv, eid: string, to: string) {
@@ -108,6 +163,14 @@ export function moveEnemy(c: Campaign, env: RunnerEnv, eid: string, to: string) 
     e.moved = true;
     if (isNamed(map, to) && !hexType(map, to).noBattle) ms.owner[to] = 'them';
     return null;
+}
+/** Take an opponent marker off the map (destroyed or withdrawn at the table). */
+export function removeEnemy(c: Campaign, env: RunnerEnv, eid: string): void {
+    const { ms } = mapCtx(c, env);
+    const e = ms.enemy.find(x => x.id === eid);
+    if (!e) throw new RuleError('No such enemy formation.');
+    if (c.draft) throw new RuleError('Finish the battle in progress first.');
+    e.gone = true;
 }
 /** Strategic reinforcement: a 'Mech restored as if under Battle/100%; arrives at the landing zone next turn. */
 export function reinforceUnit(c: Campaign, env: RunnerEnv, cuId: string): void {

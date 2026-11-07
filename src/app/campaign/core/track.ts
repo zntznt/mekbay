@@ -44,7 +44,9 @@ export function startTrack(c: Campaign, env: RunnerEnv, item: TrackItem): TrackD
     };
     return c.draft;
 }
+/** Drop the track being set up. A map battle is called off: the move that started it is undone. */
 export function cancelTrack(c: Campaign): void {
+    if (c.contract?.map && c.draft?.mapBattle) c.contract.map.battle = null;
     c.draft = null;
 }
 

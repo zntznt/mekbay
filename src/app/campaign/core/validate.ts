@@ -10,6 +10,7 @@ import {
 import { rulesFor } from './rules';
 import { REPAIR_TIME } from './runner';
 import { unitGroup, type UnitLookup } from './units';
+import { inMap, MAX_MAP_SIDE } from './hex-map';
 
 export interface Issue {
     level: 'error' | 'warn' | 'info';
@@ -409,8 +410,8 @@ export function validate(pub: Publication, units: UnitLookup | null = null): Iss
     // ---- Campaign maps ----
     for (const m of pub.maps || []) {
         const types = new Map(m.hexTypes.map(t => [t.id, t]));
-        const used = new Set(Object.values(m.hexes).map(h => h.t).filter(Boolean));
-        const lzHexes = Object.entries(m.hexes).filter(([, h]) => h.t && types.get(h.t)?.lz);
+        const used = new Set(Object.values(m.hexes).map(h => h?.t).filter(Boolean));
+        const lzHexes = Object.entries(m.hexes).filter(([id, h]) => h?.t && types.get(h.t)?.lz && inMap(m, id));
         if (!lzHexes.length) add('warn', 'maps', m.id, 'No landing zone hexes: a player has nowhere to start.');
         const ends = new Set(lzHexes.map(([, h]) => h.end || ''));
         if (lzHexes.length && (ends.has('') || ends.size < 2)) add('warn', 'maps', m.id, 'Landing zones need a map end (north/south…) so opposing sides land apart.');
@@ -421,15 +422,30 @@ export function validate(pub: Publication, units: UnitLookup | null = null): Iss
                 if ((e.kind === 'incomePct' || e.kind === 'cancel') && e.target && !types.has(e.target)) add('error', 'maps', m.id, `Hex type "${t.name}": effect targets a missing hex type`);
             }
         }
-        for (const [h, x] of Object.entries(m.hexes)) {
-            const c = Number(h.slice(0, 2));
-            const r = Number(h.slice(2));
-            if (c > m.cols || r > m.rows) add('info', 'maps', m.id, `Hex ${h} is outside the ${m.cols}×${m.rows} grid and is ignored.`);
-            if (x.t && !types.has(x.t)) add('error', 'maps', m.id, `Hex ${h} uses a missing hex type`);
+        const sideOk = (n: unknown) => Number.isInteger(n) && (n as number) >= 1 && (n as number) <= MAX_MAP_SIDE;
+        if (!sideOk(m.cols) || !sideOk(m.rows)) add('error', 'maps', m.id, `Map size must be 1–${MAX_MAP_SIDE} columns and rows.`);
+        const R = m.rules;
+        const ruleNums: [keyof typeof R, number, number][] = [
+            ['turns', 1, 100], ['turnsPerMonth', 1, 12], ['maxGroups', 1, 20], ['groupSize', 1, 50], ['minMechs', 0, 50],
+            ['lightMove', 0, MAX_MAP_SIDE], ['heavyMove', 0, MAX_MAP_SIDE], ['reinforcements', 0, 100], ['bspPerScale', 0, 10000],
+        ];
+        for (const [k, lo, hi] of ruleNums) {
+            const v = R[k];
+            if (!Number.isInteger(v) || (v as number) < lo || (v as number) > hi) add('error', 'maps', m.id, `Map rule ${k} must be a whole number ${lo}–${hi}.`);
         }
+        // One issue per kind, not per hex: an imported map can list any number of hexes.
+        let outside = 0;
+        const missing = new Set<string>();
+        for (const [h, x] of Object.entries(m.hexes)) {
+            if (!/^\d{4}$/.test(h) || !inMap(m, h)) outside++;
+            else if (x?.t && !types.has(x.t)) missing.add(h);
+        }
+        if (outside) add('info', 'maps', m.id, `${outside} hex entr${outside === 1 ? 'y is' : 'ies are'} not "CCRR" ids inside the ${m.cols}×${m.rows} grid and ${outside === 1 ? 'is' : 'are'} ignored.`);
+        if (missing.size) add('error', 'maps', m.id, `${missing.size} hex(es) use a missing hex type (${[...missing].slice(0, 5).join(', ')}${missing.size > 5 ? '…' : ''}).`);
         if (m.rules.final?.enabled && !m.rules.final.trackId) add('warn', 'maps', m.id, 'Final battle is on but has no track.');
         ref('tracks', m.rules.final?.trackId, 'maps', m.id, 'Final battle');
         if (m.rules.victory?.holdTurns && !m.hexTypes.some(t => t.strategic && used.has(t.id))) add('info', 'maps', m.id, 'No strategic-point hexes: the "hold the strategic points" victory can\'t happen.');
+        if (m.image && !m.image.startsWith('data:image/')) add('warn', 'maps', m.id, 'Background image is not an embedded data:image URL and is not shown.');
         if (m.image && m.image.length > 4e6) add('info', 'maps', m.id, `Background image is ${(m.image.length / 1e6).toFixed(1)} MB inside the publication; browser storage may run out.`);
         if (!pub.contracts.some(c => c.mapId === m.id)) add('info', 'maps', m.id, 'No contract plays on this map.');
     }
