@@ -41,7 +41,51 @@
                         </section>
                     }
 
+                    <ng-template #termsGrid>
+                        @if (terms(); as t) {
+                            <div class="cp-grid">
+                                @for (k of termKeys; track k) {
+                                    <label>{{ termLabel[k] }}
+                                        <select class="bt-select" (change)="setTerm(k, $any($event.target).value)">
+                                            @for (s of steps[k]; track s) { <option [value]="s" [selected]="s === t[k]">{{ stepLabel(k, s) }}</option> }
+                                        </select>
+                                    </label>
+                                }
+                            </div>
+                            <button type="button" class="bt-button" (click)="sign()">Sign contract</button>
+                        }
+                    </ng-template>
+
                     @if (!c.contract) {
+                        @if (svc.pub()?.generators?.length) {
+                            <section class="cp-card">
+                                <h3>Random contract</h3>
+                                @if (c.offer; as o) {
+                                    <p>{{ o.contract.name }} <small class="cp-muted">{{ o.contract.type }}{{ o.contract.subtype ? ' / ' + o.contract.subtype : '' }} · {{ o.contract.length }} month(s)</small></p>
+                                    <span class="cp-label">Roll log</span>
+                                    <ul class="cp-list">
+                                        @for (l of o.log; track $index) { @if (!l.after) { <li [style.margin-left.em]="l.depth">{{ l.text }}</li> } }
+                                    </ul>
+                                    <div class="cp-stats">
+                                        @for (k of termKeys; track k) { <div><span class="cp-label">{{ termLabel[k] }}</span>{{ stepLabel(k, o.contract.terms[k]) }}</div> }
+                                    </div>
+                                    <p class="cp-muted">Tracks and their order are revealed once the contract is signed.</p>
+                                    @if (negotiatingOffer()) {
+                                        <ng-container *ngTemplateOutlet="termsGrid" />
+                                    } @else {
+                                        <div class="cp-row">
+                                            <button type="button" class="bt-button" (click)="negotiateOffer()">Negotiate terms</button>
+                                            <button type="button" class="bt-button" (click)="declineOffer()">Decline</button>
+                                        </div>
+                                    }
+                                } @else {
+                                    <div class="cp-row">
+                                        <button type="button" class="bt-button" [disabled]="!!svc.offerBlocked()" (click)="svc.generateOffer()">Generate contract</button>
+                                        @if (svc.offerBlocked()) { <small class="cp-muted">{{ svc.offerBlocked() }}</small> }
+                                    </div>
+                                }
+                            </section>
+                        }
                         <section class="cp-card">
                             <h3>Contracts</h3>
                             <table class="cp-table">
@@ -57,18 +101,7 @@
                                     } @empty { <tr><td colspan="4">The publication has no contracts.</td></tr> }
                                 </tbody>
                             </table>
-                            @if (terms(); as t) {
-                                <div class="cp-grid">
-                                    @for (k of termKeys; track k) {
-                                        <label>{{ termLabel[k] }}
-                                            <select class="bt-select" (change)="setTerm(k, $any($event.target).value)">
-                                                @for (s of steps[k]; track s) { <option [value]="s" [selected]="s === t[k]">{{ stepLabel(k, s) }}</option> }
-                                            </select>
-                                        </label>
-                                    }
-                                </div>
-                                <button type="button" class="bt-button" (click)="sign()">Sign contract</button>
-                            }
+                            @if (!negotiatingOffer()) { <ng-container *ngTemplateOutlet="termsGrid" /> }
                         </section>
                         <div class="cp-row">
                             @if (svc.pub()?.halls?.length) {
@@ -98,20 +131,11 @@
                         <section class="cp-card">
                             <h3>Month {{ c.contract.month }}</h3>
                             @if (svc.plan(); as plan) {
-                                <ul class="cp-list">
-                                    @for (n of plan.notes; track $index) { <li class="cp-muted">{{ n }}</li> }
-                                    @for (it of plan.items; track it.key) {
-                                        <li>{{ it.label || trackName(it.trackId) }}@if (it.optional) { <small> (optional)</small> } — {{ it.done ? 'won by ' + it.winner : 'to play' }}</li>
-                                    }
-                                </ul>
                                 @if (plan.waiting; as w) {
                                     @switch (w.type) {
+                                        @case ('result') { <p class="cp-muted">The rest of this month depends on a track result.</p> }
                                         @case ('random') { <button type="button" class="bt-button" (click)="svc.rollRandom()">Roll random track</button> }
-                                        @case ('choice') {
-                                            <div class="cp-row">
-                                                @for (o of w.node.options; track $index) { <button type="button" class="bt-button" (click)="svc.choose(w.key, $index)">{{ o.label || 'Option ' + ($index + 1) }}</button> }
-                                            </div>
-                                        }
+                                        @case ('choice') { <p class="cp-warn">The mission brief needs a choice below.</p> }
                                         @case ('loop') {
                                             <div class="cp-row">
                                                 <button type="button" class="bt-button" (click)="svc.loop(w.key, true)">Repeat</button>
@@ -128,6 +152,13 @@
                                 }
                                 @if (!c.draft) { <button type="button" class="bt-button" (click)="svc.endMonth()">End month</button> }
                             </div>
+                        </section>
+
+                        <section class="cp-card">
+                            <h3>Mission brief <small>{{ c.contract.name }}</small></h3>
+                            @if (svc.flow().length) {
+                                <brief-flow [months]="svc.flow()" [pub]="svc.pub()!" [system]="c.system" (choose)="svc.choose($event.key, $event.idx)" />
+                            } @else { <p class="cp-muted">This contract has no mission brief.</p> }
                         </section>
 
                         @if (c.draft; as d) {

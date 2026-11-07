@@ -20,7 +20,7 @@ const num = (e: Event) => Number((e.target as HTMLInputElement).value) || 0;
             <h3>Record result</h3>
             <div class="cp-grid">
                 <label>Winner
-                    <select class="bt-select" (change)="winner.set($any($event.target).value)">
+                    <select class="bt-select" (change)="pickWinner($any($event.target).value)">
                         <option value="" [selected]="winner() === ''">Choose</option>
                         <option value="A" [selected]="winner() === 'A'">Side A{{ side() === 'A' ? ' (us)' : '' }}</option>
                         <option value="B" [selected]="winner() === 'B'">Side B{{ side() === 'B' ? ' (us)' : '' }}</option>
@@ -101,6 +101,13 @@ export class TrackResultFormComponent {
 
     protected readonly winner = signal<Winner | ''>('');
     protected readonly tier = signal<CombatTier>('success');
+
+    /** A lost track defaulting to a paid tier is easy to miss at the table: follow the winner, still editable. */
+    protected pickWinner(w: Winner | ''): void {
+        this.winner.set(w);
+        if (w === 'none') this.tier.set('none');
+        else if (w) this.tier.set(w === this.side() ? 'success' : 'unsuccessful');
+    }
     protected readonly objDone = signal(0);
     protected readonly objTotal = signal(1);
     protected readonly designated = signal(0);

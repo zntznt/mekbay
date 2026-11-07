@@ -20,7 +20,8 @@ import { migratePublication, type Publication } from './core/publication.model';
 import {
     acceptContract, beginMonth, campaignChecks, closeContract, endMonth, evaluateVictory, migrateCampaign, newCampaign, waitMonth,
 } from './core/runner';
-import { loopDecision, makeChoice, monthPlan, nextItem, rollRandomNode, type PlanItem } from './core/script';
+import { declineOffer, generateOffer, offerSource, signOffer } from './core/offer';
+import { briefFlow, loopDecision, makeChoice, monthPlan, nextItem, rollRandomNode, type PlanItem } from './core/script';
 import { applyTrack, cancelTrack, rollComplications, startTrack, trackForce } from './core/track';
 import type { UnitLookup } from './core/units';
 import { validate, type Issue } from './core/validate';
@@ -63,6 +64,18 @@ export class CampaignService {
     readonly nextTrack = computed(() => {
         const p = this.plan();
         return p ? nextItem(p) : null;
+    });
+    /** The contract's brief as a tree, focused on the track in play. */
+    readonly flow = computed(() => {
+        const c = this.campaign();
+        const pub = this.pub();
+        return c && pub ? briefFlow(c, pub, c.draft?.itemKey) : [];
+    });
+    /** Why no random contract can be generated now ('' = it can). */
+    readonly offerBlocked = computed(() => {
+        const c = this.campaign();
+        const pub = this.pub();
+        return c && pub ? offerSource(c, pub).why : '';
     });
     readonly force = computed(() => {
         const c = this.campaign();
@@ -205,6 +218,10 @@ export class CampaignService {
             if (cu) cu.pilotId = pilotId;
         });
     }
+    generateOffer() { return this.act((c, env) => void generateOffer(c, env)); }
+    declineOffer() { return this.act(c => declineOffer(c)); }
+    /** Signing adds the offered contract and its brief to the publication. */
+    signOffer(terms: Terms) { return this.act((c, env) => void signOffer(c, env, terms), true); }
     signContract(contractId: string, terms: Terms) { return this.act((c, env) => void acceptContract(c, env, { contractId, terms })); }
     beginMonth() { return this.act((c, env) => beginMonth(c, env)); }
     endMonth() { return this.act((c, env) => (c.contract ? endMonth(c, env) : waitMonth(c, env))); }
@@ -297,17 +314,19 @@ export class CampaignService {
         return false;
     }
 
-    /** Run a core action on a copy; keep it only if nothing threw, then save. */
-    private async act(fn: (c: Campaign, env: RunnerEnv) => void): Promise<boolean> {
+    /** Run a core action on a copy (of the publication too, when it changes it); keep it only if nothing threw, then save. */
+    private async act(fn: (c: Campaign, env: RunnerEnv) => void, changesPub = false): Promise<boolean> {
         const cur = this.campaign();
-        const env = this.env();
-        if (!cur || !env) return this.fail('No campaign open.');
+        const base = this.env();
+        if (!cur || !base) return this.fail('No campaign open.');
         const c = structuredClone(cur);
+        const env = changesPub ? { ...base, pub: structuredClone(base.pub) } : base;
         try {
             fn(c, env);
         } catch (e) {
             return this.fail((e as Error).message);
         }
+        if (changesPub) this.pub.set(env.pub);
         this.campaign.set(c);
         this.error.set('');
         await this.persist();

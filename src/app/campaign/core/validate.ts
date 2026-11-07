@@ -177,7 +177,10 @@ export function validate(pub: Publication, units: UnitLookup | null = null): Iss
     }
 
     // ---- Tracks ----
+    const isText = (v: unknown) => v == null || typeof v === 'string' || isSplit(v);
     for (const t of pub.tracks) {
+        if (!isText(t.situation)) add('error', 'tracks', t.id, 'Situation must be text');
+        for (const o of t.objectives) if (!isText(o.text)) add('error', 'tracks', t.id, `Objective "${o.name}": text must be text`);
         if (!t.generalRef && !t.objectives.length) add('warn', 'tracks', t.id, 'Custom track has no objectives');
         for (const o of t.objectives) for (const r of o.requires || []) if (!t.objectives.some(x => x.id === r)) add('error', 'tracks', t.id, `Objective "${o.name}" requires a missing objective`);
         for (const m of t.mods || []) if (!t.generalRef && m.op !== 'note') add('warn', 'tracks', t.id, 'Modifications only apply to a referenced general track');
@@ -327,6 +330,7 @@ export function validate(pub: Publication, units: UnitLookup | null = null): Iss
         for (const id of h.pilotIds) ref('pilots', id, 'halls', h.id, 'Mercenary');
         for (const id of h.upgradeIds) ref('upgrades', id, 'halls', h.id, 'Asset');
         if (!h.generatorId) add('info', 'halls', h.id, 'No contract generator');
+        if (!Number.isInteger(h.offersPerMonth) || h.offersPerMonth < 1 || h.offersPerMonth > 12) add('error', 'halls', h.id, 'Offers per month must be a whole number from 1 to 12');
     }
 
     // ---- Sponsors ----
@@ -348,6 +352,7 @@ export function validate(pub: Publication, units: UnitLookup | null = null): Iss
     }
 
     // ---- Generators ----
+    const OFFER_ASSIGN: string[] = ['type', 'subtype', 'employer', 'length', ...TERMS];
     const ASSIGN_ONCE = ['type', 'employer', 'length', 'basePay', 'support', 'transport', 'salvage', 'command', 'system', 'tracks', 'intensity'];
     for (const g of pub.generators) {
         const known = new Set((g.inputs || []).map(x => x.key));
@@ -368,6 +373,8 @@ export function validate(pub: Publication, units: UnitLookup | null = null): Iss
                 if (!m.tag) add('warn', 'generators', g.id, `${st.label}: a rule has no tag`);
             }
             if (st.when?.from && !earlier(st.when.from)) add('error', 'generators', g.id, `${st.label}: condition refers to a later step`);
+            if (st.after != null && typeof st.after !== 'boolean') add('error', 'generators', g.id, `${st.label}: "after" must be true or false`);
+            if (st.after && OFFER_ASSIGN.includes(st.assign)) add('error', 'generators', g.id, `${st.label}: "${st.assign}" is negotiated before signing, so it cannot be a briefing detail`);
             if (ASSIGN_ONCE.includes(st.assign)) {
                 const prev = assigned[st.assign];
                 if (prev) add('warn', 'generators', g.id, `${st.label}: "${st.assign}" is already set by ${prev}`);

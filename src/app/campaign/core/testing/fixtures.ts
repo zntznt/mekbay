@@ -79,6 +79,29 @@ export function makePublication(): Publication {
         ],
     });
 
+    // A random-contract generator: type and pay as above, length and tracks known at signing;
+    // the monthly track pattern and the track table are briefing details.
+    const text = (id: string, name: string, value: string) => ({
+        ...newTable(), id, name, die: '1D6', rows: [{ min: 1, max: 6, cells: { r: { kind: 'text' as const, text: value } } }],
+    });
+    const raidTracks = { ...newTable(), id: 'tb_raid_tracks', name: 'Raid tracks', die: '1D6' };
+    raidTracks.rows = [
+        { min: 1, max: 3, cells: { r: { kind: 'track', trackId: strike.id, attacker: 'A' } } },
+        { min: 4, max: 6, cells: { r: { kind: 'track', trackId: hold.id, attacker: 'B' } } },
+    ];
+    pub.tables.push(text('tb_len', 'Length', '2 months'), text('tb_jumps', 'Jumps', '3'), text('tb_pattern', 'Pattern', '1-2'), raidTracks);
+    pub.generators.push({
+        id: 'gn_offer', name: 'Hall offers', purpose: 'contract', inputs: [{ key: 'hall', label: 'Hiring hall' }],
+        steps: [
+            { id: 'o_type', label: 'Type', tableId: types.id, assign: 'type', dieMods: [{ from: 'hall', tag: 'test hall', add: -1 }] },
+            { id: 'o_pay', label: 'Base Pay', tableId: pay.id, assign: 'basePay' },
+            { id: 'o_len', label: 'Length', tableId: 'tb_len', assign: 'length' },
+            { id: 'o_jumps', label: 'Jumps', tableId: 'tb_jumps', assign: 'jumps' },
+            { id: 'o_pattern', label: 'Tracks per month', tableId: 'tb_pattern', assign: 'intensity', after: true },
+            { id: 'o_table', label: 'Track table', tableId: raidTracks.id, noRoll: true, assign: 'trackTable', after: true },
+        ],
+    });
+
     // Between-track market: a contract purchase table, a scrapyard, a vehicle sponsor and one command ability.
     const units = (unit: string) => [{ min: 1, max: 6, cells: { r: { kind: 'units' as const, units: [{ unit }] } } }];
     const market = { ...newTable(), id: 'tb_market', name: 'Harbor market', purpose: 'purchase', die: '1D6', rows: units('Phoenix Hawk PXH-1') };
@@ -108,7 +131,7 @@ export function makePublication(): Publication {
     brief.complications.tableId = events.id;
     pub.halls.push({
         id: 'hh_test', name: 'Test Hall', systemId: '', support: 'B', reducedMaintenance: true, generatorId: '', systemTableId: '',
-        purchaseTableIds: [], tempHireTableId: '', boardTableId: '', pilotIds: [], upgradeIds: [],
+        purchaseTableIds: [], tempHireTableId: '', boardTableId: '', pilotIds: [], upgradeIds: [], offersPerMonth: 1,
     });
     pub.hotSpots.push({
         id: 'hs_glass', name: 'Testworld', contractIds: [ct.id], briefIds: [brief.id], tableIds: [], availability: { from: '', to: '' },

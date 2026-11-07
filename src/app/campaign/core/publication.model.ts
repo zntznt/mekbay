@@ -105,8 +105,10 @@ export interface Track {
     id: string;
     name: string;
     generalRef: string;
+    /** Situation / briefing text shown before the track (publication text). */
+    situation?: SplitValue<string>;
     mods: { op: string }[];
-    objectives: { id: string; name: string; requires?: string[] }[];
+    objectives: { id: string; name: string; requires?: string[]; text?: SplitValue<string> }[];
     salvage: 'winner' | 'none' | string;
     end: Record<GameSystem, number> & { text: string };
     specialRules: Record<string, boolean>;
@@ -257,6 +259,8 @@ export interface Hall {
     boardTableId: string;
     pilotIds: string[];
     upgradeIds: string[];
+    /** Random contract offers the hall's generator makes per month. */
+    offersPerMonth: number;
 }
 export interface Sponsor {
     id: string;
@@ -340,6 +344,8 @@ export interface GeneratorStep {
     columnFrom?: string;
     assign: GenAssign;
     when?: { from: string; tag: string };
+    /** Briefing detail: rolled with the offer but shown only once the contract is signed. */
+    after?: boolean;
 }
 export interface GeneratorChain {
     id: string;
@@ -636,6 +642,7 @@ export function migratePublication(pub: Publication): Publication {
         h.worldTableId ??= '';
         h.facts = Array.isArray(h.facts) ? h.facts : [];
     }
+    for (const h of pub.halls) h.offersPerMonth ??= 1;
     for (const c of pub.contracts) {
         c.tempHirePilotIds ??= [];
         c.variantId ??= '';

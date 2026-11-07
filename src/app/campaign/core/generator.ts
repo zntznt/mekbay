@@ -5,7 +5,7 @@ import { roll, rowLabel, rowMatches, type Rng } from './dice';
 import { CONTRACT_TYPES, TERMS, resolveStep, stepLabel, type TermKey } from './engine';
 import {
     byId, newBrief, newContract, newNode, uid, vget,
-    type Brief, type Contract, type GeneratorChain, type Publication, type TableResult, type TableRow,
+    type Brief, type Contract, type GeneratorChain, type GeneratorStep, type Publication, type TableResult, type TableRow,
 } from './publication.model';
 
 /*
@@ -56,6 +56,13 @@ export interface GeneratorDraft {
     note?: string;
 }
 
+export interface GeneratorLogLine {
+    depth: number;
+    text: string;
+    /** From a briefing-detail step (hidden until the contract is signed). */
+    after?: boolean;
+}
+
 export interface RunGeneratorInput {
     pub: Publication;
     system?: GameSystem;
@@ -65,16 +72,21 @@ export interface RunGeneratorInput {
 export function runGenerator(gen: GeneratorChain, input: RunGeneratorInput) {
     const { pub, system = GameSystem.CLASSIC, inputs = {}, rng = Math.random } = input;
     const results: Record<string, StepResult> = {};
-    const log: { depth: number; text: string }[] = [];
+    const log: GeneratorLogLine[] = [];
     for (const inp of gen.inputs || []) {
         const v = inputs[inp.key] ?? '';
         results[inp.key] = { text: v, tags: tagsOf(v), value: Number(v) || null };
         log.push({ depth: 0, text: `${inp.label || inp.key}: ${v || '—'}` });
     }
     for (const st of gen.steps || []) {
+        const at = log.length;
+        step(st);
+        if (st.after) for (let i = at; i < log.length; i++) log[i].after = true;
+    }
+    function step(st: GeneratorStep): void {
         if (st.when?.from && st.when.tag && !hasTag(results[st.when.from], st.when.tag)) {
             log.push({ depth: 0, text: `${st.label}: skipped` });
-            continue;
+            return;
         }
         let tableId = st.tableId;
         if (st.tableMode === 'byStep') {
@@ -85,12 +97,12 @@ export function runGenerator(gen: GeneratorChain, input: RunGeneratorInput) {
         if (st.noRoll) {
             results[st.id] = { text: table?.name || '', tags: tagsOf(table?.name), value: null, tableId };
             log.push({ depth: 0, text: `${st.label}: ${table ? table.name : '(no table matched)'}` });
-            continue;
+            return;
         }
         if (!table) {
             log.push({ depth: 0, text: `${st.label}: no table` });
             results[st.id] = { text: '', tags: [], value: null };
-            continue;
+            return;
         }
         let mod = 0;
         const modNotes: string[] = [];
@@ -163,6 +175,14 @@ export function runGenerator(gen: GeneratorChain, input: RunGeneratorInput) {
 
 /** Turn a generator draft into a contract and its brief, added to the publication. */
 export function createFromDraft(pub: Publication, draft: GeneratorDraft, name = 'Generated contract'): { contract: Contract; brief: Brief } {
+    const made = draftContract(draft, name);
+    pub.contracts.push(made.contract);
+    pub.briefs.push(made.brief);
+    return made;
+}
+
+/** A contract and its brief from a generator draft, not yet added to any publication. */
+export function draftContract(draft: GeneratorDraft, name = 'Generated contract'): { contract: Contract; brief: Brief } {
     const c = newContract();
     c.name = name;
     if (draft.type) c.type = draft.type.replace(/:$/, '');
@@ -209,7 +229,5 @@ export function createFromDraft(pub: Publication, draft: GeneratorDraft, name = 
     if (!pattern.length && draft.tracks) b.months[0].nodes.push({ ...newNode('note'), text: `${draft.tracks} track(s); set the monthly pattern.` });
     const count = total || draft.tracks || 0;
     b.intensity = { min: count, max: count };
-    pub.contracts.push(c);
-    pub.briefs.push(b);
     return { contract: c, brief: b };
 }

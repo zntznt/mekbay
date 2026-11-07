@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { DialogRef } from '@angular/cdk/dialog';
+import { NgTemplateOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { GameSystem } from '../../models/common.model';
 import { DialogsService } from '../../services/dialogs.service';
@@ -11,6 +12,7 @@ import { selectableSteps, stepLabel, TERMS, TERM_LABEL, type TermKey, type Terms
 import type { PlanItem } from '../core/script';
 import { availableContracts, fmt, period } from '../core/runner';
 import { trackEventTables, unitAvailable } from '../core/track';
+import { BriefFlowComponent } from './brief-flow.component';
 import { CampaignStatusComponent } from './campaign-status.component';
 import { MarketPanelComponent } from './market-panel.component';
 import { PilotsPanelComponent } from './pilots-panel.component';
@@ -24,7 +26,7 @@ const SYSTEM_LABEL: Record<GameSystem, string> = { [GameSystem.CLASSIC]: 'Classi
 @Component({
     selector: 'campaign-dialog',
     changeDetection: ChangeDetectionStrategy.OnPush,
-    imports: [CampaignStatusComponent, MarketPanelComponent, PilotsPanelComponent, RepairsPanelComponent, SalvagePanelComponent, TrackResultFormComponent],
+    imports: [NgTemplateOutlet, BriefFlowComponent, CampaignStatusComponent, MarketPanelComponent, PilotsPanelComponent, RepairsPanelComponent, SalvagePanelComponent, TrackResultFormComponent],
     host: { class: 'fullscreen-dialog-host nopadding fullheight tv-fade' },
     templateUrl: './campaign-dialog.component.html',
     styleUrls: ['./campaign.shared.scss', './campaign-dialog.component.scss'],
@@ -51,6 +53,11 @@ export class CampaignDialogComponent {
     protected readonly suggestions = computed(() => this.svc.searchUnits(this.unitQuery()));
     protected readonly contractId = signal('');
     protected readonly terms = signal<Terms | null>(null);
+    /** Whether the terms being edited are the random contract offer's. */
+    protected readonly negotiatingOffer = computed(() => {
+        const o = this.svc.campaign()?.offer;
+        return !!o && this.contractId() === o.contract.id;
+    });
 
     protected readonly contracts = computed(() => {
         const c = this.svc.campaign();
@@ -85,10 +92,6 @@ export class CampaignDialogComponent {
 
     close(): void {
         this.dialogRef.close();
-    }
-
-    protected trackName(id: string): string {
-        return this.svc.pub()?.tracks.find(t => t.id === id)?.name || 'Track';
     }
 
     // ---------- files ----------
@@ -133,9 +136,21 @@ export class CampaignDialogComponent {
     protected setTerm(t: TermKey, v: string): void {
         this.terms.update(x => (x ? { ...x, [t]: Number(v) } : x));
     }
+    protected negotiateOffer(): void {
+        const o = this.svc.campaign()?.offer;
+        this.contractId.set(o ? o.contract.id : '');
+        this.terms.set(o ? { ...o.contract.terms } : null);
+    }
     protected async sign(): Promise<void> {
         const t = this.terms();
-        if (t && (await this.svc.signContract(this.contractId(), t))) this.pickContract('');
+        if (!t) return;
+        const ok = this.negotiatingOffer() ? await this.svc.signOffer(t) : await this.svc.signContract(this.contractId(), t);
+        if (ok) this.pickContract('');
+    }
+    protected async declineOffer(): Promise<void> {
+        const o = this.svc.campaign()?.offer;
+        if (!o || !(await this.dialogs.requestConfirmation(`Decline ${o.contract.name}? The offer is gone for good; the hall's next offer may mean waiting a month.`, 'Decline offer', 'warning'))) return;
+        if (await this.svc.declineOffer()) this.pickContract('');
     }
     protected setupTrack(item: PlanItem): void {
         const c = this.svc.campaign()!;

@@ -4,7 +4,7 @@ import type { GameSystem } from '../../models/common.model';
 import type { Rng } from './dice';
 import type { CombatTier, Terms } from './engine';
 import type { OpponentModule } from './opponent.model';
-import type { BetweenBlock, MapEffect, Publication, Side, Table, TableResult } from './publication.model';
+import type { BetweenBlock, Brief, Contract, MapEffect, Publication, Side, Table, TableResult } from './publication.model';
 import type { LadderColumn } from './rules';
 import type { UnitLookup } from './units';
 
@@ -209,6 +209,18 @@ export interface PurchaseState {
     roll: number;
     count: number;
     logs: RollLogLine[][];
+}
+
+/** A generated contract the command may negotiate and sign, or decline. */
+export interface ContractOffer {
+    hallId: string;
+    generatorId: string;
+    date: string;
+    /** Generator roll log; `after` lines are briefing details, hidden until signed. */
+    log: { depth: number; text: string; after?: boolean }[];
+    contract: Contract;
+    brief: Brief;
+    jumps: number | null;
 }
 
 export interface ActiveContract {
@@ -519,6 +531,10 @@ export interface Campaign {
     pilots: CampaignPilot[];
     ledger: LedgerEntry[];
     contract: ActiveContract | null;
+    /** A random contract offer waiting for an answer (between contracts). */
+    offer: ContractOffer | null;
+    /** Offers generated this month, for the hall's monthly limit. */
+    offers: { date: string; n: number };
     history: ContractHistory[];
     tracks: TrackRecord[];
     draft: TrackDraft | null;

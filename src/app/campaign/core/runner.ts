@@ -62,7 +62,7 @@ export function newCampaign(input: NewCampaignInput = {}): Campaign {
         options: { battleArmor: false, tanker: false, mechCommander: false, veteranCommand: false, ...options },
         backgroundId, factionId, regular: factionId ? { factionId, parentId: '', rank: rankFor(vet ? 5 : 1) } : null,
         tofttOptions: [], factionRolls: {}, hallId: '', sponsorId: '', sponsorBanned: [], modifiers: { mechBay: false },
-        setup: true, orgType: 'is', formations: [], units: [], pilots: [], ledger: [], contract: null, history: [], tracks: [], draft: null,
+        setup: true, orgType: 'is', formations: [], units: [], pilots: [], ledger: [], contract: null, offer: null, offers: { date: '', n: 0 }, history: [], tracks: [], draft: null,
         opponent: null, notes: '',
     };
     if (vet) for (let i = 1; i <= 4; i++) c.pilots.push(newPilot(`Named pilot ${i}`, 1000));
@@ -86,6 +86,8 @@ export function migrateCampaign(c: Campaign): Campaign {
     c.formations ||= [];
     c.orgType ||= 'is';
     c.opponent ??= null;
+    c.offer ??= null;
+    c.offers ??= { date: '', n: 0 };
     if (c.factionId && !c.regular) c.regular = { factionId: c.factionId, parentId: '', rank: rankFor(c.reputation) };
     for (const p of c.pilots) {
         p.cols ||= { gunnery: 0, piloting: 0, asSkill: 0, edge: 0, edgeAbilities: 0 };
@@ -405,6 +407,7 @@ export function acceptContract(c: Campaign, env: RunnerEnv, input: AcceptInput):
     if (c.maintPaid === c.date) c.date = addMonths(c.date, 1);
     c.scale = scale;
     c.setup = false;
+    c.offer = null;
     const ac: ActiveContract = {
         id: uid('cc'), contractId: ct.id, briefId: ct.briefId || '', name: ct.name, number: ct.number || '', employer: ct.employer || '',
         side, terms: { ...terms }, offered: { ...ct.terms }, scale, length: Number(ct.length) || 1, month: 1, startDate: c.date,
@@ -518,6 +521,8 @@ export function endMonth(c: Campaign, env: RunnerEnv): void {
 /** Between contracts: spend a month. */
 export function waitMonth(c: Campaign, env: RunnerEnv): void {
     if (c.contract) throw new RuleError('Finish or break the contract first.');
+    // An unanswered offer lapses with the month.
+    c.offer = null;
     endMonth(c, env);
 }
 
