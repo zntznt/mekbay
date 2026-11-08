@@ -417,6 +417,15 @@ export interface EnemyMarker {
     note: string;
     gone?: boolean;
 }
+/** Map-turn move order: alternate after an Initiative roll; the side with more formations left moves two for one. */
+export interface MapOrder {
+    rolls: Record<MapSide, number>;
+    winner: MapSide;
+    /** Side holding the move; '' until the Initiative winner chooses. */
+    side: MapSide | '';
+    /** Moves made since `side` took the move. */
+    used: number;
+}
 export interface MapState {
     mapId: string;
     phase: 'landing' | 'turns' | 'ended';
@@ -435,6 +444,8 @@ export interface MapState {
     ended: { by: 'hq' | 'hold' | 'sp' | 'turns'; winner: MapSide | ''; text: string } | null;
     finalDone: boolean;
     notes: string[];
+    /** This map turn's move order; null until Initiative is rolled. */
+    order: MapOrder | null;
 }
 
 // ---------- campaign ----------

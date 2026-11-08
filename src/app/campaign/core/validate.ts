@@ -5,7 +5,7 @@ import { compressNums, coverage, dieRange } from './dice';
 import { TERMS, TERM_LABEL, bestBasePayTerms, contractEconomics, selectable, tempHireRoom, trackLimit } from './engine';
 import {
     BETWEEN_BLOCKS, COLLECTIONS, briefNodes, byId, isSplit, tableResults, trackRange,
-    type CollectionKey, type Publication,
+    type AttackerRoll, type CollectionKey, type Publication,
 } from './publication.model';
 import { rulesFor } from './rules';
 import { REPAIR_TIME } from './runner';
@@ -24,6 +24,20 @@ const ym = (x: string | undefined): number | null => {
     const m = /^(\d{4})-(\d{1,2})$/.exec(String(x || '').trim());
     return m ? Number(m[1]) * 12 + Number(m[2]) - 1 : null;
 };
+
+const MAX_GEN_INPUTS = 20;
+const MAX_ATTACKER_ROLLS = 50;
+/** Problems with one Attacker / Defender rule (at most one message per kind). */
+function attackerRollIssues(a: AttackerRoll): string[] {
+    const out: string[] = [];
+    const label = `Attacker / Defender rule ${a?.type || '(no type)'}`;
+    if (!a?.type) out.push(`${label}: no contract type`);
+    if (a?.die && !dieRange(a.die)) out.push(`${label}: bad die ${a.die}`);
+    if (a?.die && !(Number.isFinite(a.min) && Number.isFinite(a.max) && a.min <= a.max)) out.push(`${label}: attacker range must be min ≤ max`);
+    if (!Array.isArray(a?.tracks) || a.tracks.length > MAX_ATTACKER_ROLLS) out.push(`${label}: at most ${MAX_ATTACKER_ROLLS} track entries`);
+    if (!a?.die && !a?.tracks?.length) out.push(`${label}: needs a die or track entries`);
+    return out;
+}
 
 /**
  * Errors, warnings and notes for a publication. Unit checks run only when a
@@ -384,7 +398,12 @@ export function validate(pub: Publication, units: UnitLookup | null = null): Iss
             known.add(st.id);
         }
         if (g.purpose === 'contract' && !assigned['type']) add('info', 'generators', g.id, 'No step sets the contract type');
+        if ((g.inputs || []).length > MAX_GEN_INPUTS) add('error', 'generators', g.id, `More than ${MAX_GEN_INPUTS} inputs`);
+        if ((g.inputs || []).some(i => !i?.key)) add('error', 'generators', g.id, 'An input has no key');
+        if ((g.attackerRolls || []).length > MAX_ATTACKER_ROLLS) add('error', 'generators', g.id, `More than ${MAX_ATTACKER_ROLLS} Attacker / Defender rules`);
+        for (const a of (g.attackerRolls || []).slice(0, MAX_ATTACKER_ROLLS)) for (const m of attackerRollIssues(a)) add('error', 'generators', g.id, m);
     }
+    for (const ct of pub.contracts) if (ct.attackerRoll) for (const m of attackerRollIssues(ct.attackerRoll)) add('error', 'contracts', ct.id, m);
 
     // ---- Star systems ----
     for (const sy of pub.starSystems) {

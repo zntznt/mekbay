@@ -8,11 +8,13 @@ import { DialogsService } from '../../services/dialogs.service';
 import { CampaignService } from '../campaign.service';
 import { DAMAGE_LABEL, isGone, type TrackResult } from '../core/campaign.model';
 import { sellQuote } from '../core/market';
-import { selectableSteps, stepLabel, TERMS, TERM_LABEL, type TermKey, type Terms } from '../core/engine';
-import type { PlanItem } from '../core/script';
-import { availableContracts, fmt, period } from '../core/runner';
+import { basePay, ECON, pct, selectableSteps, stepLabel, TERMS, TERM_LABEL, transportCost, type TermKey, type Terms } from '../core/engine';
+import { offerSource, playerInputs } from '../core/offer';
+import { byId } from '../core/publication.model';
+import { monthPlan, nextItem, type PlanItem } from '../core/script';
+import { availableContracts, contractLimitCheck, fmt, negotiationCheck, ownUnits, period, regularTermOptions } from '../core/runner';
 import { hexName, hexType, mapOf } from '../core/hex-map';
-import { trackEventTables, unitAvailable } from '../core/track';
+import { contractHires, trackEventTables, unitAvailable } from '../core/track';
 import { BriefFlowComponent } from './brief-flow.component';
 import { CampaignStatusComponent } from './campaign-status.component';
 import { MapPanelComponent } from './map-panel.component';
@@ -53,12 +55,102 @@ export class CampaignDialogComponent {
     protected readonly system = signal<GameSystem | ''>('');
     protected readonly unitQuery = signal('');
     protected readonly suggestions = computed(() => this.svc.searchUnits(this.unitQuery()));
+    protected readonly backgroundId = signal('');
+    protected readonly factionId = signal('');
+    protected readonly parentId = signal('');
+    protected readonly parents = computed(() => this.svc.pub()?.factions.find(f => f.id === this.factionId())?.parents ?? []);
     protected readonly contractId = signal('');
     protected readonly terms = signal<Terms | null>(null);
+    /** Units left behind for the contract being negotiated (all others are brought). */
+    protected readonly leaveBehind = signal<string[]>([]);
+    protected readonly signToftt = signal(false);
+    protected readonly genInputs = signal<Record<string, string>>({});
+    protected readonly tofttBonus = signal('');
     /** Whether the terms being edited are the random contract offer's. */
     protected readonly negotiatingOffer = computed(() => {
         const o = this.svc.campaign()?.offer;
         return !!o && this.contractId() === o.contract.id;
+    });
+
+    /** The contract whose terms are being edited: a publication contract or the random offer. */
+    private readonly negotiated = computed(() => {
+        const c = this.svc.campaign();
+        const id = this.contractId();
+        if (!c || !id) return null;
+        return c.offer?.contract.id === id ? c.offer.contract : this.svc.pub()?.contracts.find(x => x.id === id) ?? null;
+    });
+    /** What the terms on the table cost in Reputation and pay per month, before signing. */
+    protected readonly preview = computed(() => {
+        const c = this.svc.campaign();
+        const ct = this.negotiated();
+        const t = this.terms();
+        const env = this.svc.env();
+        if (!c || !ct || !t || !env) return null;
+        const toftt = this.signToftt();
+        const scale = c.scale;
+        const jumps = c.offer?.contract.id === ct.id ? c.offer.jumps : null;
+        const neg = c.regular || toftt ? null : negotiationCheck(c, ct, t, scale);
+        const tc = transportCost(scale, jumps);
+        const bring = ownUnits(c).filter(u => !this.leaveBehind().includes(u.id)).map(u => u.id);
+        const lim = contractLimitCheck(c, env.units, scale, bring);
+        return {
+            neg, toftt, map: !!ct.mapId,
+            basePay: toftt ? 0 : basePay(scale, t), maint: ECON.maintenancePerScale * scale,
+            transport: toftt ? 0 : tc, transportCover: toftt ? 0 : Math.round(tc * pct('transport', t.transport)),
+            lim, allowed: !c.regular || !!availableContracts(c, env.pub).find(x => x.ct.id === ct.id)?.allowed,
+        };
+    });
+    protected readonly regularOptions = computed(() => {
+        const c = this.svc.campaign();
+        return c?.regular ? regularTermOptions(c) : [];
+    });
+    protected readonly bringable = computed(() => {
+        const c = this.svc.campaign();
+        return c ? ownUnits(c).map(u => ({ id: u.id, label: u.name || this.svc.unitLabel(u.unit) })) : [];
+    });
+    /** Generator inputs the player answers before a random offer is rolled, with the tags the generator reacts to. */
+    protected readonly offerInputs = computed(() => {
+        const c = this.svc.campaign();
+        const pub = this.svc.pub();
+        const gen = c && pub ? offerSource(c, pub).gen : undefined;
+        return playerInputs(gen).map(i => {
+            const tags = new Set<string>();
+            for (const st of gen!.steps) {
+                for (const r of [...(st.dieMods || []), ...(st.shifts || [])]) if (r.from === i.key && r.tag) tags.add(r.tag);
+                if (st.when?.from === i.key && st.when.tag) tags.add(st.when.tag);
+                if (st.tableFrom === i.key) for (const m of st.tableMap || []) if (m.tag) tags.add(m.tag);
+            }
+            return { key: i.key, label: i.label || i.key, tags: [...tags].slice(0, 50) };
+        });
+    });
+    /** Contract end nodes the brief has reached with nothing left to play this month. */
+    protected readonly endReached = computed(() => {
+        const c = this.svc.campaign();
+        const pub = this.svc.pub();
+        if (!c?.contract || c.contract.status !== 'active' || c.draft || !pub) return null;
+        const plan = monthPlan(c, pub);
+        if (plan.waiting || nextItem(plan)) return null;
+        return plan.ends.find(e => e.scope === 'contract') ?? plan.ends[0] ?? null;
+    });
+    protected readonly hires = computed(() => {
+        const c = this.svc.campaign();
+        const env = this.svc.env();
+        if (!c?.draft || !env || c.draft.mapBattle) return [];
+        const fielded = new Set(c.draft.hireIds.map(id => c.units.find(u => u.id === id)?.tempHire?.hireId));
+        return contractHires(c, env).map(h => ({ ...h, on: fielded.has(h.id), label: this.svc.unitLabel(h.unit) }));
+    });
+    /** Whole contract played for the other side: the bonus half-price unit is picked at close. */
+    protected readonly allToftt = computed(() => {
+        const c = this.svc.campaign();
+        const ct = c?.contract;
+        if (!ct) return false;
+        const tr = c.tracks.filter(t => t.contractRef === ct.id && !t.skip);
+        return !!tr.length && tr.every(t => t.toftt);
+    });
+    protected readonly background = computed(() => {
+        const c = this.svc.campaign();
+        const pub = this.svc.pub();
+        return c?.setup && pub ? byId(pub, 'backgrounds', c.backgroundId) ?? null : null;
     });
 
     protected readonly contracts = computed(() => {
@@ -124,7 +216,14 @@ export class CampaignDialogComponent {
 
     protected start(): void {
         const s = this.system();
-        if (s) void this.svc.startCampaign(this.campaignName(), s);
+        if (!s) return;
+        void this.svc.startCampaign(this.campaignName(), s, { backgroundId: this.backgroundId(), factionId: this.factionId(), parentId: this.factionId() ? this.parentId() : '' }).then(ok => {
+            if (!ok) return;
+            this.campaignName.set('');
+            this.backgroundId.set('');
+            this.factionId.set('');
+            this.parentId.set('');
+        });
     }
     protected addUnit(name: string): void {
         void this.svc.addUnit(name);
@@ -133,7 +232,23 @@ export class CampaignDialogComponent {
     protected pickContract(id: string): void {
         const ct = this.svc.pub()?.contracts.find(x => x.id === id);
         this.contractId.set(ct ? id : '');
-        this.terms.set(ct ? { ...ct.terms } : null);
+        this.terms.set(ct ? { ...(this.regularOptions()[0]?.terms ?? ct.terms) } : null);
+        this.leaveBehind.set([]);
+        this.signToftt.set(false);
+    }
+    protected setLeaveBehind(id: string, bring: boolean): void {
+        this.leaveBehind.update(ids => (bring ? ids.filter(x => x !== id) : [...ids, id]));
+    }
+    protected setGenInput(key: string, v: string): void {
+        this.genInputs.update(m => ({ ...m, [key]: v }));
+    }
+    protected async endFromBrief(text: string): Promise<void> {
+        if (await this.dialogs.requestConfirmation(`The mission brief ends the contract here${text ? `: ${text}` : ''}. End the contract now and close it?`, 'End contract', 'warning')) {
+            await this.svc.endContractNow(text);
+        }
+    }
+    protected async closeContract(won: boolean): Promise<void> {
+        if (await this.svc.closeContract(won, this.allToftt() ? this.tofttBonus() : '')) this.tofttBonus.set('');
     }
     protected setTerm(t: TermKey, v: string): void {
         this.terms.update(x => (x ? { ...x, [t]: Number(v) } : x));
@@ -141,12 +256,16 @@ export class CampaignDialogComponent {
     protected negotiateOffer(): void {
         const o = this.svc.campaign()?.offer;
         this.contractId.set(o ? o.contract.id : '');
-        this.terms.set(o ? { ...o.contract.terms } : null);
+        this.terms.set(o ? { ...(this.regularOptions()[0]?.terms ?? o.contract.terms) } : null);
+        this.leaveBehind.set([]);
+        this.signToftt.set(false);
     }
     protected async sign(): Promise<void> {
         const t = this.terms();
         if (!t) return;
-        const ok = this.negotiatingOffer() ? await this.svc.signOffer(t) : await this.svc.signContract(this.contractId(), t);
+        const left = this.leaveBehind();
+        const opts = { toftt: this.signToftt(), bring: left.length ? this.bringable().map(u => u.id).filter(id => !left.includes(id)) : null };
+        const ok = this.negotiatingOffer() ? await this.svc.signOffer(t, opts) : await this.svc.signContract(this.contractId(), t, opts);
         if (ok) this.pickContract('');
     }
     protected async declineOffer(): Promise<void> {

@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { RuleError, type Campaign, type RunnerEnv } from './campaign.model';
-import { allHexes, hexIncome, MAX_MAP_SIDE, neighbors, pathLength, reachable } from './hex-map';
-import { addEnemy, addGroup, beginMapTurns, editGroup, endMapTurn, landAt, legalMoves, moveEnemy, moveGroup, reinforceUnit, setEnemyLz, setMapWinner } from './map-play';
-import { buyUnit } from './market';
+import { allHexes, hexIncome, MAX_MAP_SIDE, neighbors, pathLength, reachable, toMove } from './hex-map';
+import {
+    addEnemy, addGroup, beginMapTurns, chooseMapOrder, deployArrivals, editGroup, endMapTurn, landAt, legalMoves, moveEnemy, moveGroup, reinforceUnit, rollMapInitiative,
+    setEnemyLz, setMapWinner, stayEnemy, waitingAtLz,
+} from './map-play';
+import { buyUnit, hireRecruit, mapRecruit } from './market';
 import { migratePublication, type CampaignMap, type Publication } from './publication.model';
 import { acceptContract, migrateCampaign, newCampaign } from './runner';
 import { applyTrack, cancelTrack, startFinalBattle } from './track';
@@ -33,6 +36,8 @@ function deployed(seed = 1) {
     const alpha = addGroup(c, env, 'Alpha', [ids.wolv, ids.locust], 5);
     const bravo = addGroup(c, env, 'Bravo', [ids.atlas], 5);
     beginMapTurns(c, env);
+    rollMapInitiative(c, env);
+    chooseMapOrder(c, env, 'us');
     return { ...x, alpha: alpha.id, bravo: bravo.id };
 }
 const ms = (c: Campaign) => c.contract!.map!;
@@ -152,9 +157,8 @@ describe('campaign map: battles become tracks', () => {
     it('a defence the defender wins sends the attackers back where they came from', () => {
         const { c, env, alpha } = deployed();
         moveGroup(c, env, alpha, '0302');
-        addEnemy(c, env, 'Red');
-        moveEnemy(c, env, ms(c).enemy[0].id, '0402');
-        expect(ms(c).owner['0402']).toBe('them');
+        addEnemy(c, env, 'Red', '0402');
+        expect(toMove(ms(c))).toBe('them'); // one formation left each: the move passes
         const r = moveEnemy(c, env, ms(c).enemy[0].id, '0302');
         expect(r?.battle.ourRole).toBe('defender');
         expect(c.draft?.trackId).toBe('tr_strike'); // the town's scenario
@@ -244,5 +248,81 @@ describe('campaign map: imported data', () => {
         expect(ms(c).enemy).toEqual([]);
         expect(ms(c).hold).toEqual({ us: 0, them: 0 });
         expect(ms(c).battle).toBeNull();
+    });
+});
+
+describe('campaign map: move order', () => {
+    it('needs Initiative and the winner\'s choice before anything moves', () => {
+        const { c, env, ids } = onMap();
+        landAt(c, env, '0101');
+        setEnemyLz(c, env, '0801');
+        const g = addGroup(c, env, 'Alpha', [ids.wolv], 10);
+        beginMapTurns(c, env);
+        expect(() => moveGroup(c, env, g.id, '0201')).toThrowError(RuleError, /Initiative/);
+        const o = rollMapInitiative(c, env);
+        expect(o.rolls.us).not.toBe(o.rolls.them);
+        expect(o.winner).toBe(o.rolls.us > o.rolls.them ? 'us' : 'them');
+        expect(() => rollMapInitiative(c, env)).toThrowError(RuleError, /already/);
+        expect(() => moveGroup(c, env, g.id, '0201')).toThrowError(RuleError, /chooses/);
+        chooseMapOrder(c, env, 'them');
+        addEnemy(c, env, 'Red');
+        expect(toMove(ms(c))).toBe('them');
+        expect(() => moveGroup(c, env, g.id, '0201')).toThrowError(RuleError, /opponent's move/);
+    });
+
+    it('alternates, lets the side with more formations move two for one, and resets each turn', () => {
+        const { c, env, alpha } = deployed();
+        for (const n of ['Red', 'Blue', 'Green']) addEnemy(c, env, n);
+        const [red, blue] = ms(c).enemy.map(e => e.id);
+        expect(toMove(ms(c))).toBe('us'); // 2 against 3: one move each until it evens out
+        moveGroup(c, env, alpha, '0201');
+        expect(toMove(ms(c))).toBe('them');
+        stayEnemy(c, env, red);
+        expect(toMove(ms(c))).toBe('them'); // 3 left against 1: two moves
+        stayEnemy(c, env, blue);
+        expect(toMove(ms(c))).toBe('us');
+        expect(() => stayEnemy(c, env, ms(c).enemy[2].id)).toThrowError(RuleError, /your move/);
+        endMapTurn(c, env);
+        expect(ms(c).order).toBeNull();
+    });
+
+    it('an attack on a formation that had not moved gives the attacker the next move', () => {
+        const { c, env, alpha } = deployed();
+        addEnemy(c, env, 'Red', '0302');
+        addEnemy(c, env, 'Blue');
+        moveGroup(c, env, alpha, '0302');
+        applyTrack(c, env, { winner: c.contract!.side, tier: 'success' });
+        expect(toMove(ms(c))).toBe('us');
+    });
+});
+
+describe('campaign map: units arriving mid-map and recruits', () => {
+    it('units bought on the map wait at the landing zone, then form up or join a formation there', () => {
+        const { c, env, bravo, alpha } = deployed();
+        env.pub.maps[0].rules.purchaseNeedsHex = false;
+        const cu = buyUnit(c, env, 'Wolverine WVR-6R');
+        expect(waitingAtLz(c, env)).toEqual([]); // arrives next map turn
+        endMapTurn(c, env);
+        expect(waitingAtLz(c, env).map(u => u.id)).toEqual([cu.id]);
+        expect(() => deployArrivals(c, env, [cu.id])).toThrowError(RuleError, /slots are taken/);
+        rollMapInitiative(c, env);
+        chooseMapOrder(c, env, 'us');
+        moveGroup(c, env, alpha, '0201');
+        expect(() => deployArrivals(c, env, [cu.id], alpha)).toThrowError(RuleError, /landing zone/);
+        deployArrivals(c, env, [cu.id], bravo);
+        expect(ms(c).groups.find(g => g.id === bravo)!.unitIds).toContain(cu.id);
+        expect(waitingAtLz(c, env)).toEqual([]);
+    });
+
+    it('recruits crews where a held hex allows it', () => {
+        const { c, env, ids } = deployed();
+        env.pub.maps[0].hexTypes.find(t => t.id === 'hx_fort')!.effects.push({ kind: 'recruit', g: 4, p: 5, skill: 4, cost: 100 });
+        expect(mapRecruit(c, env)!.options).toEqual([]);
+        ms(c).owner['0402'] = 'us';
+        expect(mapRecruit(c, env)!.options.length).toBe(1);
+        const before = c.warchest;
+        hireRecruit(c, env, ids.locust, 0);
+        expect(c.units.find(u => u.id === ids.locust)!.crew).toEqual(jasmine.objectContaining({ kind: 'fixed', g: 4, p: 5 }));
+        expect(c.warchest).toBe(before - 100);
     });
 });

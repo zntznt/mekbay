@@ -72,7 +72,7 @@ export function makePublication(): Publication {
     ];
     pub.tables.push(types, pay);
     pub.generators.push({
-        id: 'gn_contract', name: 'Contract generator', purpose: 'contract', inputs: [],
+        id: 'gn_contract', name: 'Contract generator', purpose: 'contract', inputs: [], attackerRolls: [],
         steps: [
             { id: 's_type', label: 'Type', tableId: types.id, assign: 'type' },
             { id: 's_pay', label: 'Pay', tableId: pay.id, assign: 'basePay', shifts: [{ from: 's_type', tag: 'garrison', add: -1 }] },
@@ -91,7 +91,7 @@ export function makePublication(): Publication {
     ];
     pub.tables.push(text('tb_len', 'Length', '2 months'), text('tb_jumps', 'Jumps', '3'), text('tb_pattern', 'Pattern', '1-2'), raidTracks);
     pub.generators.push({
-        id: 'gn_offer', name: 'Hall offers', purpose: 'contract', inputs: [{ key: 'hall', label: 'Hiring hall' }],
+        id: 'gn_offer', name: 'Hall offers', purpose: 'contract', inputs: [{ key: 'hall', label: 'Hiring hall' }], attackerRolls: [],
         steps: [
             { id: 'o_type', label: 'Type', tableId: types.id, assign: 'type', dieMods: [{ from: 'hall', tag: 'test hall', add: -1 }] },
             { id: 'o_pay', label: 'Base Pay', tableId: pay.id, assign: 'basePay' },

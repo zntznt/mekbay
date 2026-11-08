@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { RuleError, type Campaign, type RandomPick, type RunnerEnv, type Winner } from './campaign.model';
-import { roll, rowMatches } from './dice';
-import { briefNodes, byId, type BriefNode, type Publication, type Side, type TableResult } from './publication.model';
+import { roll, rowMatches, type Rng } from './dice';
+import { briefNodes, byId, type AttackerRoll, type BriefNode, type Publication, type Side, type TableResult } from './publication.model';
 
 /*
  * Mission-brief script: walks the current month's nodes, resolving branches
@@ -151,6 +151,7 @@ export function rollRandomNode(c: Campaign, env: RunnerEnv, key: string, node: E
         else if (res.kind === 'rollAgain' && depth < 3) for (let i = 0; i < res.times; i++) once(depth + 1);
         else if (res.kind === 'bySide') pushTrack(ct.side === 'B' ? res.rb : res.ra, v);
     };
+    const rule = byId(env.pub, 'contracts', ct.contractId)?.attackerRoll;
     for (let i = 0; i < (node.rolls || 1); i++) {
         let guard = 0;
         const before = picks.length;
@@ -160,8 +161,25 @@ export function rollRandomNode(c: Campaign, env: RunnerEnv, key: string, node: E
             once();
         } while (node.dup === 'reroll' && isDup() && guard++ < 20);
     }
+    if (rule) {
+        for (const p of picks) {
+            const r = rollAttacker(rule, byId(env.pub, 'tracks', p.trackId)?.name || '', rng);
+            if (!r) continue;
+            p.attacker = r.attacks ? ct.side : ct.side === 'A' ? 'B' : 'A';
+            p.log += ` · ${r.text}: ${r.attacks ? 'you attack' : 'you defend'}`;
+        }
+    }
     ct.rolls[key] = picks;
     return picks;
+}
+/** Whether the command attacks in a track, by its contract type's Attacker / Defender rule; null when the rule doesn't decide. */
+export function rollAttacker(rule: AttackerRoll, trackName: string, rng: Rng): { attacks: boolean; text: string } | null {
+    const byName = (rule.tracks || []).find(t => t.name && t.name.trim().toLowerCase() === trackName.trim().toLowerCase());
+    if (byName) return { attacks: !!byName.attacker, text: trackName };
+    if (!rule.die) return null;
+    const v = roll(rule.die, rng).total;
+    if (!Number.isFinite(v)) return null;
+    return { attacks: v >= rule.min && v <= rule.max, text: `${rule.die} → ${v}` };
 }
 export function makeChoice(c: Campaign, key: string, idx: number): void {
     if (c.contract) c.contract.choices[key] = idx;

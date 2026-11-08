@@ -209,7 +209,21 @@ export interface Contract {
     mapId: string;
     /** Repair time between tracks of the same month: '' = the command's option, 'roll' = Repair Time Table, or a fixed kind. */
     repairTime: ContractRepairTime;
+    /** Generated contracts: who attacks in each rolled track (copied from the generator by contract type). */
+    attackerRoll: AttackerRoll | null;
     notes: string;
+}
+/**
+ * Attacker / Defender for each rolled track of a contract type: the command
+ * attacks when `die` rolls min–max, or as listed by track name.
+ */
+export interface AttackerRoll {
+    /** Contract type it applies to (matched without case). */
+    type: string;
+    die: string;
+    min: number;
+    max: number;
+    tracks: { name: string; attacker: boolean }[];
 }
 export type ContractRepairTime = '' | 'roll' | RepairTimeKind;
 
@@ -353,6 +367,8 @@ export interface GeneratorChain {
     purpose: string;
     inputs: { key: string; label: string }[];
     steps: GeneratorStep[];
+    /** Attacker / Defender rolls by contract type, applied to the tracks of contracts this generator makes. */
+    attackerRolls: AttackerRoll[];
 }
 
 // ---------- campaign maps ----------
@@ -489,7 +505,7 @@ export function newContract(): Contract {
         location: { planet: '', faction: '', sub: '', disputedBy: '', random: false, terrain: '' },
         type: 'Raid', subtype: '', length: 3, terms: defaultTerms(), locks: {}, nonNegotiable: false, piracy: false,
         purchase: { tableId: '', gateDie: '2D6', gate: [{ min: 7, count: 1 }, { min: 11, count: 2 }], freq: 'month', note: '' },
-        tempHires: [], tempHirePilotIds: [], opposedId: '', briefId: '', variantId: '', mapId: '', repairTime: '', notes: '',
+        tempHires: [], tempHirePilotIds: [], opposedId: '', briefId: '', variantId: '', mapId: '', repairTime: '', attackerRoll: null, notes: '',
     };
 }
 export function newBrief(): Brief {
@@ -648,6 +664,12 @@ export function migratePublication(pub: Publication): Publication {
         c.variantId ??= '';
         c.mapId ??= '';
         c.repairTime ??= '';
+        c.attackerRoll ??= null;
+    }
+    for (const g of pub.generators) {
+        g.inputs = Array.isArray(g.inputs) ? g.inputs : [];
+        g.attackerRolls = Array.isArray(g.attackerRolls) ? g.attackerRolls : [];
+        for (const a of g.attackerRolls) a.tracks = Array.isArray(a.tracks) ? a.tracks : [];
     }
     for (const f of pub.factions) for (const pc of f.parents || []) {
         pc.id ||= uid('pc');

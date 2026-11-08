@@ -3,8 +3,8 @@
 import { NgTemplateOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
 import { isGone, type Campaign, type MapSide, type RunnerEnv } from '../core/campaign.model';
-import { activeEffects, describeEffect, enemyAt, groupAt, groupChecks, groupMove, hexIncome, hexName, hexType, mapOf } from '../core/hex-map';
-import { legalMoves } from '../core/map-play';
+import { activeEffects, describeEffect, enemyAt, groupAt, groupChecks, groupMove, hexIncome, hexName, hexType, mapOf, toMove, unmoved } from '../core/hex-map';
+import { legalMoves, waitingAtLz } from '../core/map-play';
 import { byId } from '../core/publication.model';
 import { fmt } from '../core/runner';
 import { HexMapComponent, type HexMarker } from './hex-map.component';
@@ -24,6 +24,11 @@ const initials = (s: string) => s.replace(/[^A-Za-z0-9 ]/g, '').split(/\s+/).map
     changeDetection: ChangeDetectionStrategy.OnPush,
     imports: [HexMapComponent, NgTemplateOutlet],
     styleUrl: './campaign.shared.scss',
+    styles: [`
+        .cp-move { font-weight: 700; padding: 2px 10px; border-radius: 4px; border: 1px solid currentColor; }
+        .cp-move-us { color: var(--bt-yellow); }
+        .cp-move-them { color: var(--danger); }
+    `],
     template: `
         @if (view(); as v) {
             <section class="cp-card">
@@ -73,6 +78,45 @@ const initials = (s: string) => s.replace(/[^A-Za-z0-9 ]/g, '').split(/\s+/).map
 
             <!-- During a battle the track setup below matters; movement and the end of turn wait for its result. -->
             @if (v.ms.phase === 'turns' && !v.draft) {
+                <section class="cp-card cp-turn" aria-live="polite">
+                    @if (!v.ms.order) {
+                        <div class="cp-row">
+                            <strong>Map turn {{ v.c.contract!.month }}: roll Initiative</strong>
+                            <button type="button" class="bt-button" (click)="rollInitiative.emit()">Roll Initiative</button>
+                        </div>
+                    } @else if (!v.ms.order.side) {
+                        <p>Initiative: you {{ v.ms.order.rolls.us }}, opponent {{ v.ms.order.rolls.them }}. {{ v.ms.order.winner === 'us' ? 'You choose' : 'The opponent chooses' }}:</p>
+                        <div class="cp-row">
+                            <button type="button" class="bt-button" (click)="chooseOrder.emit(v.ms.order.winner)">{{ v.ms.order.winner === 'us' ? 'You move first' : 'Opponent moves first' }}</button>
+                            <button type="button" class="bt-button" (click)="chooseOrder.emit(v.ms.order.winner === 'us' ? 'them' : 'us')">{{ v.ms.order.winner === 'us' ? 'You move second' : 'Opponent moves second' }}</button>
+                        </div>
+                    } @else {
+                        @let w = whoseMove();
+                        <div class="cp-row">
+                            <span class="cp-move" [class.cp-move-us]="w === 'us'" [class.cp-move-them]="w === 'them'">{{ w === 'us' ? 'Your move' : w === 'them' ? "Opponent's move" : 'All formations have moved' }}</span>
+                            <small class="cp-muted">Left to move: you {{ left().us }}, opponent {{ left().them }} · Initiative {{ v.ms.order.rolls.us }}–{{ v.ms.order.rolls.them }}</small>
+                        </div>
+                    }
+                </section>
+
+                @if (waiting().length) {
+                    <section class="cp-card">
+                        <h3>Waiting at the landing zone</h3>
+                        <div class="cp-row">
+                            @for (u of waiting(); track u.id) {
+                                <label><input type="checkbox" [checked]="arrivalPick().includes(u.id)" (change)="pickArrival(u.id, $any($event.target).checked)"> {{ u.label }}</label>
+                            }
+                        </div>
+                        <div class="cp-row">
+                            <button type="button" class="bt-button" [disabled]="!arrivalPick().length || groups().length >= v.map.rules.maxGroups" (click)="deployPicked('')">New formation at the LZ</button>
+                            @for (g of lzGroups(); track g.id) {
+                                <button type="button" class="bt-button" [disabled]="!arrivalPick().length || g.units + arrivalPick().length > v.map.rules.groupSize" (click)="deployPicked(g.id)">Join {{ g.name }}</button>
+                            }
+                        </div>
+                        <p class="cp-muted">@if (groups().length >= v.map.rules.maxGroups) {All {{ v.map.rules.maxGroups }} formation slots are taken: they wait until one opens or a formation comes back to the LZ. } Rebalance BSP at the start of the next map turn.</p>
+                    </section>
+                }
+
                 <section class="cp-card">
                     <h3>Your formations</h3>
                     <table class="cp-table">
@@ -93,7 +137,12 @@ const initials = (s: string) => s.replace(/[^A-Za-z0-9 ]/g, '').split(/\s+/).map
                                 <tr [class.cp-muted]="e.moved">
                                     <td><button type="button" class="bt-button tiny" [class.selected]="selE() === e.id" (click)="pickEnemy(e.id, e.hex)">{{ e.name }}</button></td>
                                     <td>{{ e.hex }}{{ e.moved ? ' · moved' : '' }}</td>
-                                    <td><button type="button" class="bt-button tiny" (click)="removeEnemy.emit(e.id)">Remove</button></td>
+                                    <td>
+                                        <div class="cp-row">
+                                            @if (!e.moved) { <button type="button" class="bt-button tiny" (click)="stayEnemy.emit(e.id)">Stay</button> }
+                                            <button type="button" class="bt-button tiny" (click)="removeEnemy.emit(e.id)">Remove</button>
+                                        </div>
+                                    </td>
                                 </tr>
                             } @empty { <tr><td class="cp-muted">No opponent formations on the map.</td></tr> }
                         </tbody>
@@ -197,6 +246,10 @@ export class MapPanelComponent {
     readonly finalBattle = output<void>();
     readonly joinDefense = output<string>();
     readonly withdraw = output<void>();
+    readonly rollInitiative = output<void>();
+    readonly chooseOrder = output<MapSide>();
+    readonly stayEnemy = output<string>();
+    readonly deploy = output<{ unitIds: string[]; gid: string }>();
 
     protected readonly fmt = fmt;
     protected readonly selG = signal('');
@@ -204,6 +257,7 @@ export class MapPanelComponent {
     protected readonly info = signal('');
     protected readonly enemyName = signal('');
     protected readonly designated = signal(0);
+    protected readonly arrivalPick = signal<string[]>([]);
 
     protected readonly view = computed(() => {
         const c = this.campaign();
@@ -225,6 +279,7 @@ export class MapPanelComponent {
         if (ms.phase === 'landing') return !ms.lzHex ? 'Tap one of your landing zones (LZ).' : !ms.enemyLz ? "Tap the opponent's landing zone, on the other end of the map." : 'Organise your formations, then deploy.';
         if (ms.phase !== 'turns') return '';
         if (v.draft) return 'A battle is in progress: finish its track first.';
+        if (!ms.order?.side) return 'Settle the move order first.';
         const g = ms.groups.find(x => x.id === this.selG());
         const e = ms.enemy.find(x => x.id === this.selE());
         if (g) return g.moved ? `${g.name} has moved this turn.` : `Tap a highlighted hex to move ${g.name} (${groupMove(v.c, v.env, g)} hexes). Moving onto the opponent starts a battle.`;
@@ -258,6 +313,22 @@ export class MapPanelComponent {
     protected readonly groups = computed(() => {
         const v = this.view();
         return v ? v.ms.groups.filter(g => g.unitIds.length).map(g => ({ id: g.id, name: g.name, hex: g.hex, units: g.unitIds.length, bsp: g.bsp, moved: g.moved, move: groupMove(v.c, v.env, g) })) : [];
+    });
+    protected readonly whoseMove = computed(() => {
+        const ms = this.view()?.ms;
+        return ms ? toMove(ms) : '';
+    });
+    protected readonly left = computed(() => {
+        const ms = this.view()?.ms;
+        return ms ? { us: unmoved(ms, 'us'), them: unmoved(ms, 'them') } : { us: 0, them: 0 };
+    });
+    protected readonly waiting = computed(() => {
+        const v = this.view();
+        return v && v.ms.phase === 'turns' ? waitingAtLz(v.c, v.env).map(u => ({ id: u.id, label: u.name || this.labelOf()(u.unit) })) : [];
+    });
+    protected readonly lzGroups = computed(() => {
+        const lz = this.view()?.ms.lzHex;
+        return this.groups().filter(g => g.hex === lz);
     });
     protected readonly enemies = computed(() => this.view()?.ms.enemy.filter(e => !e.gone) ?? []);
     protected readonly helpers = computed(() => {
@@ -351,6 +422,14 @@ export class MapPanelComponent {
         const foe = enemyAt(ms, id);
         this.selG.set(mine?.id || '');
         this.selE.set(!mine && foe ? foe.id : '');
+    }
+    protected pickArrival(id: string, on: boolean): void {
+        this.arrivalPick.update(ids => (on ? [...ids, id] : ids.filter(x => x !== id)));
+    }
+    protected deployPicked(gid: string): void {
+        const ids = this.arrivalPick().filter(id => this.waiting().some(u => u.id === id));
+        this.deploy.emit({ unitIds: ids, gid });
+        this.arrivalPick.set([]);
     }
     protected toggleUnit(gid: string, current: string[], uid: string, on: boolean): void {
         this.edit.emit({ gid, unitIds: on ? [...current, uid] : current.filter(x => x !== uid) });

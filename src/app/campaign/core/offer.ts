@@ -4,7 +4,7 @@ import { RuleError, type ActiveContract, type Campaign, type ContractOffer, type
 import type { Terms } from './engine';
 import { draftContract, runGenerator } from './generator';
 import { byId, type GeneratorChain, type Hall, type Publication } from './publication.model';
-import { acceptContract, note } from './runner';
+import { acceptContract, note, type AcceptInput } from './runner';
 
 /*
  * Random contract offers: between contracts, the hiring hall's generator rolls
@@ -25,12 +25,21 @@ export function offerSource(c: Campaign, pub: Publication): { hall?: Hall; gen?:
     return { hall, gen, why: '' };
 }
 
-/** Roll a random contract offer on the hall's generator (the `hall` input gets the hall's name). */
-export function generateOffer(c: Campaign, env: RunnerEnv): ContractOffer {
+/** Longest generator input value kept (inputs only steer tag rules). */
+export const MAX_INPUT_LENGTH = 80;
+/** Generator inputs the player fills in; `hall` is always the hiring hall's name. */
+export const playerInputs = (gen: GeneratorChain | undefined): GeneratorChain['inputs'] => (gen?.inputs || []).filter(i => i.key && i.key !== 'hall');
+
+/** Roll a random contract offer on the hall's generator (the `hall` input gets the hall's name, the rest come from the player). */
+export function generateOffer(c: Campaign, env: RunnerEnv, inputs: Record<string, string> = {}): ContractOffer {
     const { hall, gen, why } = offerSource(c, env.pub);
     if (why || !hall || !gen) throw new RuleError(why);
-    const { log, draft } = runGenerator(gen, { pub: env.pub, system: c.system, inputs: { hall: hall.name }, rng: env.rng });
+    const given: Record<string, string> = { hall: hall.name };
+    for (const i of playerInputs(gen)) given[i.key] = String(inputs[i.key] ?? '').trim().slice(0, MAX_INPUT_LENGTH);
+    const { log, draft } = runGenerator(gen, { pub: env.pub, system: c.system, inputs: given, rng: env.rng });
     const { contract, brief } = draftContract(draft, `${hall.name}: ${draft.type || 'random'} contract (${c.date})`);
+    const rule = (gen.attackerRolls || []).find(a => a.type.trim().toLowerCase() === contract.type.trim().toLowerCase());
+    contract.attackerRoll = rule ? structuredClone(rule) : null;
     const offer: ContractOffer = { hallId: hall.id, generatorId: gen.id, date: c.date, log, contract, brief, jumps: draft.jumps ?? null };
     c.offers = { date: c.date, n: (c.offers.date === c.date ? c.offers.n : 0) + 1 };
     c.offer = offer;
@@ -47,12 +56,12 @@ export function declineOffer(c: Campaign): void {
  * Sign the offer on negotiated terms. The contract and its brief join the
  * publication (`env.pub` is mutated: callers pass a copy and keep it on success).
  */
-export function signOffer(c: Campaign, env: RunnerEnv, terms: Terms): ActiveContract {
+export function signOffer(c: Campaign, env: RunnerEnv, terms: Terms, opts: Pick<AcceptInput, 'bring' | 'toftt'> = {}): ActiveContract {
     const o = c.offer;
     if (!o) throw new RuleError('No contract offer to sign.');
     env.pub.contracts.push(o.contract);
     env.pub.briefs.push(o.brief);
-    const ac = acceptContract(c, env, { contractId: o.contract.id, terms, jumps: o.jumps });
+    const ac = acceptContract(c, env, { ...opts, contractId: o.contract.id, terms, jumps: o.jumps });
     c.offer = null;
     return ac;
 }

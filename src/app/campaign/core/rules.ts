@@ -75,6 +75,8 @@ export interface RearmInput {
     alternateMunitions: number;
 }
 
+export type RearmField = 'ammoTons' | 'advTons' | 'altMunitions';
+
 export interface MoveThresholds {
     lightTons?: number;
     lightSz?: number;
@@ -124,6 +126,8 @@ export interface SystemRules {
     baseRepairCost(u: CampaignUnitData, level: RepairLevel, opts: RepairOptions): RepairBase;
     reconfigureCost(u: CampaignUnitData, opts: RepairOptions): number;
     rearmCost(input: RearmInput): number;
+    /** Track-result inputs the rearm cost reads under this system. */
+    readonly rearmFields: readonly RearmField[];
     /** Whether a unit moves at the slow (heavy) campaign-map rate. */
     isHeavyMover(u: CampaignUnitData, t: MoveThresholds): boolean;
 
@@ -171,6 +175,7 @@ export const CLASSIC_RULES: SystemRules = {
     baseRepairCost: (u, level) => tonnageRepair(u, level),
     reconfigureCost: u => Math.ceil(u.tons / 2),
     rearmCost: r => (r.ammoTons || 0) * 10 + (r.advancedAmmoTons || 0) * 100,
+    rearmFields: ['ammoTons', 'advTons'],
     isHeavyMover: (u, t) => (u.tons || 0) > (t.lightTons ?? 55),
     destroyedSalvageTarget: null,
     crewCheckOnDestroyed: false,
@@ -204,6 +209,7 @@ export const ALPHA_STRIKE_RULES: SystemRules = {
     },
     reconfigureCost: (u, opts) => (opts.sizeRepairs ? (u.as.SZ || 1) * 10 : Math.ceil(u.tons / 2)),
     rearmCost: r => (r.units.filter(u => !u.as.specials.includes('ENE')).length + (r.alternateMunitions || 0)) * 20,
+    rearmFields: ['altMunitions'],
     isHeavyMover: (u, t) => (u.as.SZ || 0) > (t.lightSz ?? 2),
     destroyedSalvageTarget: asSalvageTarget,
     crewCheckOnDestroyed: true,

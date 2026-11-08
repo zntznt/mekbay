@@ -48,11 +48,13 @@ export interface NewCampaignInput {
     options?: Partial<CompanyOptions>;
     backgroundId?: string;
     factionId?: string;
+    /** Regular military: the parent command within the faction. */
+    parentId?: string;
     start?: string | null;
 }
 
 export function newCampaign(input: NewCampaignInput = {}): Campaign {
-    const { pub = null, name = 'New mercenary command', system = null, options = {}, backgroundId = '', factionId = '', start = null } = input;
+    const { pub = null, name = 'New mercenary command', system = null, options = {}, backgroundId = '', factionId = '', parentId = '', start = null } = input;
     const vet = !!options.veteranCommand;
     const c: Campaign = {
         schema: CAMPAIGN_SCHEMA, id: uid('cmp'), name, pubId: pub?.id || '', pubTitle: pub?.title || '',
@@ -60,7 +62,7 @@ export function newCampaign(input: NewCampaignInput = {}): Campaign {
         scale: vet ? 3 : 1, // R-13
         reputation: vet ? 5 : 1, warchest: vet ? 6000 : 3000, debt: 0, debtMonths: 0, skipUsed: false, skipPenalty: false,
         options: { battleArmor: false, tanker: false, mechCommander: false, veteranCommand: false, ...options },
-        backgroundId, factionId, regular: factionId ? { factionId, parentId: '', rank: rankFor(vet ? 5 : 1) } : null,
+        backgroundId, factionId, regular: factionId ? { factionId, parentId, rank: rankFor(vet ? 5 : 1) } : null,
         tofttOptions: [], factionRolls: {}, hallId: '', sponsorId: '', sponsorBanned: [], modifiers: { mechBay: false },
         setup: true, orgType: 'is', formations: [], units: [], pilots: [], ledger: [], contract: null, offer: null, offers: { date: '', n: 0 }, history: [], tracks: [], draft: null,
         opponent: null, notes: '',
@@ -111,6 +113,7 @@ export function migrateCampaign(c: Campaign): Campaign {
         ms.battles ??= 0;
         ms.reinforcements ??= 0;
         ms.finalDone ??= false;
+        ms.order ??= null;
         for (const k of ['lzHex', 'lzGroup', 'enemyLz'] as const) ms[k] ??= '';
         for (const g of ms.groups) g.unitIds ||= [];
     }
@@ -655,6 +658,16 @@ export function closeContract(c: Campaign, env: RunnerEnv, input: CloseInput = {
     });
     c.contract = null;
     c.skipPenalty = false;
+}
+
+/** The mission brief reached a contract end node: the contract ends now and waits to be closed. */
+export function endContractNow(c: Campaign, reason = ''): void {
+    const ct = c.contract;
+    if (!ct || ct.status !== 'active') throw new RuleError('No active contract.');
+    if (c.draft) throw new RuleError('Finish or cancel the track in progress first.');
+    ct.status = 'ended';
+    ct.endDate = c.date;
+    note(c, `Contract ended by the mission brief${reason ? `: ${reason}` : ''}`);
 }
 
 /** Escape clause: the force is under two-thirds of the Scale limit (R-12 scales it). */

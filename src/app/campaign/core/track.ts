@@ -10,7 +10,7 @@ import { roll, type Rng } from './dice';
 import {
     SCALE, SUPPORT_RATING_MOD, combatPay, commandBand, pct, purchasePrice, stepLabel, supportKind, trackLimit, type CombatTier, type CommandBand,
 } from './engine';
-import { effectsOf, enemyAt, groupMove, hexDist, hexName, hexType, isNamed, mapOf, pathLength, withdrawHex } from './hex-map';
+import { effectsOf, enemyAt, groupMove, hexDist, hexName, hexType, isNamed, mapOf, pathLength, recordMove, withdrawHex } from './hex-map';
 import { MAX_NAMED, isBAPilot, pilotStats } from './pilots';
 import { BETWEEN_BLOCKS, briefNodes, byId, uid, type BetweenBlock, type HotSpot, type Publication, type Side } from './publication.model';
 import { rulesFor } from './rules';
@@ -634,6 +634,7 @@ export function withdrawFromBattle(c: Campaign, env: RunnerEnv): void {
         e.moved = true;
     }
     if (isNamed(map, b.hex)) ms.owner[b.hex] = 'them';
+    recordMove(ms, 'them', true); // the withdrawal was the defender's move: the attacker moves next
     c.draft = null;
     ms.battle = null;
 }
@@ -652,6 +653,9 @@ function resolveMapBattle(c: Campaign, env: RunnerEnv, b: MapBattle, winner: Win
     const theyWin = winner !== ct.side && winner !== 'none';
     const g = ms.groups.find(x => x.id === b.groupId);
     const e = ms.enemy.find(x => x.id === b.enemyId);
+    // An attack on a defender that had not moved uses up the defender's next move: the attacker moves again.
+    const defender = b.ourRole === 'attacker' ? e : g;
+    recordMove(ms, b.ourRole === 'attacker' ? 'us' : 'them', !!defender && !defender.moved);
     for (const gr of ms.groups) gr.unitIds = gr.unitIds.filter(id => {
         const cu = c.units.find(u => u.id === id);
         return !!cu && !isGone(cu.state);

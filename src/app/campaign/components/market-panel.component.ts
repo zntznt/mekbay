@@ -5,7 +5,7 @@ import { isGone, type Campaign, type RunnerEnv, type UnitSource } from '../core/
 import { purchasePrice } from '../core/engine';
 import { inSponsorScope, purchasePeriod, SCRAP_CONDITION, sellQuote, sponsorOf, sponsorQuote, type DeliveryZone } from '../core/market';
 import { byId } from '../core/publication.model';
-import { fmt, period } from '../core/runner';
+import { factionOf, fmt, period } from '../core/runner';
 
 export interface BuyRequest {
     unit: string;
@@ -19,6 +19,15 @@ export interface BuyRequest {
     changeDetection: ChangeDetectionStrategy.OnPush,
     styleUrl: './campaign.shared.scss',
     template: `
+        @if (campaign().debt > 0) {
+            <h4>Warchest Debt <small>{{ fmt(campaign().debt) }} SP</small></h4>
+            <div class="cp-row">
+                <input class="bt-input cp-num" type="number" min="1" [max]="debtMax()" [value]="debtAmount() || debtMax()" (input)="debtAmount.set(+$any($event.target).value || 0)">
+                <button type="button" class="bt-button tiny" [disabled]="!debtMax()" (click)="payDebt.emit(debtAmount() || debtMax()); debtAmount.set(0)">Pay down</button>
+                <small class="cp-muted">No purchases or training until it is paid.</small>
+            </div>
+        }
+
         <h4>Buy</h4>
         <input class="bt-input" type="search" placeholder="Chassis or model" [value]="query()" (input)="query.set($any($event.target).value)">
         <table class="cp-table">
@@ -74,6 +83,48 @@ export interface BuyRequest {
             }
         }
 
+        @if (faction(); as f) {
+            <h4>Faction purchase options <small>{{ f.name }}</small></h4>
+            @if (f.log; as log) {
+                <ul class="cp-list">
+                    @for (l of log; track $index) {
+                        <li [style.margin-left.em]="l.depth">
+                            @if (l.units?.length) {
+                                @for (u of l.units; track $index) {
+                                    {{ labelOf()(u.unit) }}
+                                    <button type="button" class="bt-button tiny" (click)="buyOne(u.unit)">Buy {{ priceOf(u.unit) }} SP</button>
+                                }
+                            } @else { {{ l.text }} }
+                        </li>
+                    }
+                </ul>
+            } @else {
+                <div class="cp-row">
+                    @if (f.adjust) {
+                        <label>Roll ±1 <select class="bt-select" (change)="factionMod.set(+$any($event.target).value)">
+                            <option value="0">0</option><option value="1">+1</option><option value="-1">−1</option>
+                        </select></label>
+                    }
+                    <button type="button" class="bt-button tiny" (click)="rollFaction.emit({ mod: factionMod() })">Roll (once a month)</button>
+                </div>
+            }
+        }
+
+        @if (toftt().length) {
+            <h4>Taking One For the Team options</h4>
+            <table class="cp-table">
+                <tbody>
+                    @for (o of toftt(); track o.id) {
+                        <tr>
+                            <td>{{ labelOf()(o.unit) }} <small class="cp-muted">from {{ o.from }}{{ o.half ? ', half price' : '' }}</small></td>
+                            <td class="num">{{ fmt(o.price) }} SP</td>
+                            <td><button type="button" class="bt-button tiny" (click)="buyToftt.emit(o.id)">Buy</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+
         @if (scrapTables().length) {
             <h4>Scrapyard</h4>
             @if (scrap(); as s) {
@@ -118,6 +169,7 @@ export interface BuyRequest {
             </ul>
         }
     `,
+    styles: ['.cp-num { width: 6em; }'],
 })
 export class MarketPanelComponent {
     readonly campaign = input.required<Campaign>();
@@ -133,11 +185,30 @@ export class MarketPanelComponent {
     readonly setSponsor = output<string>();
     readonly order = output<{ unit: string; zone: DeliveryZone }>();
     readonly collect = output<string>();
+    readonly payDebt = output<number>();
+    readonly rollFaction = output<{ mod: number }>();
+    readonly buyToftt = output<string>();
 
     protected readonly fmt = fmt;
     protected readonly query = signal('');
     protected readonly zone = signal<DeliveryZone>('territory');
     protected readonly scrapTable = signal('');
+    protected readonly debtAmount = signal(0);
+    protected readonly factionMod = signal(0);
+
+    protected readonly debtMax = computed(() => Math.min(this.campaign().debt, this.campaign().warchest));
+    /** Regular military: this month's Faction Purchase Options roll (from rank 2 it may be adjusted by ±1). */
+    protected readonly faction = computed(() => {
+        const c = this.campaign();
+        const f = factionOf(c, this.env().pub);
+        if (!f?.purchaseTableId || !c.regular) return null;
+        return { name: f.name, adjust: (c.regular.rank || 1) >= 2, log: c.factionRolls[period(c)] ?? null };
+    });
+    protected readonly toftt = computed(() => {
+        const c = this.campaign();
+        const env = this.env();
+        return c.tofttOptions.map(o => ({ ...o, price: Math.ceil(purchasePrice(env.units(o.unit), c.system) * (o.half ? 0.5 : 1)) }));
+    });
 
     private readonly sponsor = computed(() => sponsorOf(this.campaign(), this.env()));
     private breaks(unit: string): boolean {

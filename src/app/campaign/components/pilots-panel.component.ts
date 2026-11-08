@@ -2,7 +2,7 @@
 
 import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
 import { isGone, type Campaign, type RunnerEnv } from '../core/campaign.model';
-import { COSTS, healLimit, type HireInput } from '../core/market';
+import { COSTS, healLimit, mapRecruit, type HireInput } from '../core/market';
 import { COL_LABEL, isBAPilot, ladderIndex, nextThreshold, pilotStats } from '../core/pilots';
 import { LADDER, rulesFor, type LadderColumn } from '../core/rules';
 
@@ -63,6 +63,17 @@ import { LADDER, rulesFor, type LadderColumn } from '../core/rules';
             <button type="button" class="bt-button tiny" [disabled]="!crewUnit()" (click)="hire.emit({ kind: 'regular', cuId: crewUnit() })">Regular crew ({{ costs.hireRegular }} SP)</button>
             <button type="button" class="bt-button tiny" [disabled]="!crewUnit()" (click)="hire.emit({ kind: 'green', cuId: crewUnit() })">Green crew (free)</button>
         </div>
+        @if (recruit(); as r) {
+            <h4>Recruit on the map</h4>
+            @if (r.needed && !r.options.length) { <p class="cp-warn">Recruiting MechWarriors needs a held hex that allows it; green crews are still free.</p> }
+            @for (o of r.options; track $index) {
+                <div class="cp-row">
+                    <span>{{ o.label }}</span>
+                    <button type="button" class="bt-button tiny" [disabled]="!crewUnit()" (click)="recruitCrew.emit({ cuId: crewUnit(), idx: $index })">Recruit for unit ({{ o.cost }} SP)</button>
+                </div>
+            }
+            @if (r.options.length && !crewUnit()) { <p class="cp-muted">Pick the unit above first.</p> }
+        }
     `,
     styles: ['.cp-num { width: 5em; }'],
 })
@@ -75,6 +86,7 @@ export class PilotsPanelComponent {
     readonly trainSca = output<{ pilotId: string; name: string }>();
     readonly trainFormation = output<{ pilotId: string; formation: string }>();
     readonly hire = output<HireInput>();
+    readonly recruitCrew = output<{ cuId: string; idx: number }>();
 
     protected readonly costs = COSTS;
     protected readonly hireName = signal('');
@@ -107,6 +119,20 @@ export class PilotsPanelComponent {
                 }),
             };
         });
+    });
+    /** Crews a held map hex lets the command recruit (null off the map). */
+    protected readonly recruit = computed(() => {
+        const c = this.campaign();
+        const r = mapRecruit(c, this.env());
+        if (!r) return null;
+        const rules = rulesFor(c.system);
+        return {
+            needed: r.needed,
+            options: r.options.map(o => ({
+                label: `${rules.skillLabel({ gunnery: Number(o.g), piloting: Number(o.p), skill: Number(o.skill) })} crew${o.typeName ? ` (${o.typeName}${o.lz ? ', landing zone' : ''})` : o.lz ? ' (landing zone)' : ''}`,
+                cost: Number(o.cost) || 0,
+            })),
+        };
     });
     protected readonly crewless = computed(() =>
         this.campaign().units

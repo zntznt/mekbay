@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { isGone, RuleError, type Campaign, type MapGroup, type MapSide, type MapState, type RunnerEnv } from './campaign.model';
+import { isGone, RuleError, type Campaign, type CampaignUnit, type MapGroup, type MapOrder, type MapSide, type MapState, type RunnerEnv } from './campaign.model';
 import { roll } from './dice';
 import { ECON, purchasePrice } from './engine';
-import { describeEffect, effectsOf, enemyAt, groupAt, groupChecks, groupMove, hexIncome, hexName, hexType, isNamed, reachable, resolveLzEffects } from './hex-map';
+import {
+    describeEffect, effectsOf, enemyAt, groupAt, groupChecks, groupMove, hexIncome, hexName, hexType, isNamed, reachable, recordMove, resolveLzEffects, toMove,
+} from './hex-map';
+import { isMek } from './units';
 import { isBAPilot } from './pilots';
 import { uid } from './publication.model';
 import { repairQuote } from './market';
@@ -103,6 +106,40 @@ export function beginMapTurns(c: Campaign, env: RunnerEnv): void {
         g.moved = false;
     }
     ms.phase = 'turns';
+    ms.order = null;
+}
+
+// ---------- move order ----------
+
+/** Roll Initiative for the map turn (2D6 each side, ties rerolled); the winner then chooses who moves first. */
+export function rollMapInitiative(c: Campaign, env: RunnerEnv): MapOrder {
+    const { ms } = mapCtx(c, env);
+    if (ms.phase !== 'turns') throw new RuleError('Map turns have not started.');
+    if (c.draft) throw new RuleError('Finish the battle in progress first.');
+    if (ms.order) throw new RuleError('Initiative is already rolled for this map turn.');
+    const rng = env.rng ?? Math.random;
+    let us = 0;
+    let them = 0;
+    for (let i = 0; i < 50 && us === them; i++) {
+        us = roll('2D6', rng).total;
+        them = roll('2D6', rng).total;
+    }
+    ms.order = { rolls: { us, them }, winner: us >= them ? 'us' : 'them', side: '', used: 0 };
+    return ms.order;
+}
+/** The Initiative winner's choice: which side moves first. */
+export function chooseMapOrder(c: Campaign, env: RunnerEnv, first: MapSide): void {
+    const { ms } = mapCtx(c, env);
+    if (!ms.order) throw new RuleError('Roll Initiative first.');
+    if (ms.order.side) throw new RuleError('The move order is already chosen.');
+    ms.order.side = first;
+    ms.order.used = 0;
+}
+function requireMove(ms: MapState, side: MapSide): void {
+    if (!ms.order) throw new RuleError('Roll Initiative for this map turn first.');
+    if (!ms.order.side) throw new RuleError('The Initiative winner chooses who moves first.');
+    const w = toMove(ms);
+    if (w && w !== side) throw new RuleError(w === 'us' ? 'It is your move.' : "It is the opponent's move.");
 }
 /** Where a formation can move this turn, with the hexes it takes. Enemy hexes end the move (a battle). */
 export function legalMoves(c: Campaign, env: RunnerEnv, gid: string): Map<string, number> {
@@ -119,6 +156,7 @@ export function moveGroup(c: Campaign, env: RunnerEnv, gid: string, to: string) 
     const g = ms.groups.find(x => x.id === gid);
     if (!g || !g.unitIds.length) throw new RuleError('No such formation.');
     if (g.moved) throw new RuleError(`${g.name} has already moved this turn.`);
+    requireMove(ms, 'us');
     const t = hexType(map, to);
     if (t.impassable) throw new RuleError(`${t.name} can't be entered.`);
     const steps = legalMoves(c, env, gid).get(to);
@@ -132,18 +170,32 @@ export function moveGroup(c: Campaign, env: RunnerEnv, gid: string, to: string) 
         mate.bsp = (Number(mate.bsp) || 0) + (Number(g.bsp) || 0);
         g.unitIds = [];
         mate.moved = true;
+        recordMove(ms, 'us');
         return { merged: mate.name };
     }
     g.hex = to;
     g.moved = true;
+    recordMove(ms, 'us');
     g.garrison = (t.effects || []).some(e => e.kind === 'garrison');
     if (isNamed(map, to) && !t.noBattle) ms.owner[to] = 'us';
     return { moved: steps };
 }
+/** A formation elects not to move: that is its move. */
 export function stayGroup(c: Campaign, env: RunnerEnv, gid: string): void {
     const { ms } = mapCtx(c, env);
     const g = ms.groups.find(x => x.id === gid);
-    if (g) g.moved = true;
+    if (!g || g.moved || c.draft) return;
+    requireMove(ms, 'us');
+    g.moved = true;
+    recordMove(ms, 'us');
+}
+export function stayEnemy(c: Campaign, env: RunnerEnv, eid: string): void {
+    const { ms } = mapCtx(c, env);
+    const e = ms.enemy.find(x => x.id === eid && !x.gone);
+    if (!e || e.moved || c.draft) return;
+    requireMove(ms, 'them');
+    e.moved = true;
+    recordMove(ms, 'them');
 }
 /** Opponent formations are markers moved by the player (or a GM, or an opponent module). */
 export function addEnemy(c: Campaign, env: RunnerEnv, name: string, hex = ''): void {
@@ -155,12 +207,16 @@ export function moveEnemy(c: Campaign, env: RunnerEnv, eid: string, to: string) 
     const { ms, map } = mapCtx(c, env);
     const e = ms.enemy.find(x => x.id === eid);
     if (!e) throw new RuleError('No such enemy formation.');
+    if (ms.phase !== 'turns') throw new RuleError('Map turns have not started.');
     if (c.draft) throw new RuleError('Finish the battle in progress first.');
+    if (e.moved) throw new RuleError(`${e.name} has already moved this turn.`);
+    requireMove(ms, 'them');
     if (hexType(map, to).impassable) throw new RuleError("That hex can't be entered.");
     const mine = groupAt(ms, to) || (to === ms.lzHex ? { id: '' } : null);
     if (mine) return startMapBattle(c, env, { hex: to, from: e.hex, groupId: mine.id, enemyId: e.id, ourRole: 'defender' });
     e.hex = to;
     e.moved = true;
+    recordMove(ms, 'them');
     if (isNamed(map, to) && !hexType(map, to).noBattle) ms.owner[to] = 'them';
     return null;
 }
@@ -172,6 +228,45 @@ export function removeEnemy(c: Campaign, env: RunnerEnv, eid: string): void {
     if (c.draft) throw new RuleError('Finish the battle in progress first.');
     e.gone = true;
 }
+// ---------- units arriving mid-map ----------
+
+/** Own units at the landing zone with no formation: bought, replaced or received during the map campaign. */
+export function waitingAtLz(c: Campaign, env: RunnerEnv): CampaignUnit[] {
+    const { ms, ct } = mapCtx(c, env);
+    const inGroup = new Set(ms.groups.flatMap(g => g.unitIds));
+    return c.units.filter(u => !u.tempHire && !u.leftBehind && !u.delivery && !u.scrapCheck && !isGone(u.state) && !inGroup.has(u.id) && !(u.arrives && ct.month < u.arrives));
+}
+/**
+ * Put waiting units into a new formation at the landing zone, or into a formation
+ * that is at the landing zone (it came to collect them). With every formation slot
+ * taken they wait for one to open or for a formation to come back.
+ */
+export function deployArrivals(c: Campaign, env: RunnerEnv, unitIds: string[], gid = ''): MapGroup {
+    const { ms, R } = mapCtx(c, env);
+    if (ms.phase !== 'turns') throw new RuleError('Map turns have not started.');
+    if (c.draft) throw new RuleError('Finish the battle in progress first.');
+    const waiting = new Set(waitingAtLz(c, env).map(u => u.id));
+    const ids = [...new Set(unitIds)].filter(id => waiting.has(id));
+    if (!ids.length) throw new RuleError('Choose units waiting at the landing zone.');
+    if (gid) {
+        const g = ms.groups.find(x => x.id === gid && x.unitIds.length);
+        if (!g) throw new RuleError('No such formation.');
+        if (g.hex !== ms.lzHex) throw new RuleError(`${g.name} must be at the landing zone to collect units.`);
+        if (g.unitIds.length + ids.length > R.groupSize) throw new RuleError(`${g.name}: the maximum is ${R.groupSize} units.`);
+        g.unitIds.push(...ids);
+        return g;
+    }
+    const live = ms.groups.filter(g => g.unitIds.length);
+    if (live.length >= R.maxGroups) throw new RuleError(`All ${R.maxGroups} formation slots are taken: the units wait at the landing zone.`);
+    if (ids.length > R.groupSize) throw new RuleError(`A formation has at most ${R.groupSize} units.`);
+    const meks = ids.map(id => c.units.find(u => u.id === id)).filter(u => !!u && isMek(env.units(u.unit))).length;
+    if (meks < (R.minMechs ?? 1)) throw new RuleError(`A formation needs at least ${R.minMechs ?? 1} 'Mech.`);
+    ms.groups = live;
+    const g: MapGroup = { id: uid('fg'), name: `Formation ${ms.groups.length + 1}`, hex: ms.lzHex, unitIds: ids, bsp: 0, moved: false };
+    ms.groups.push(g);
+    return g;
+}
+
 /** Strategic reinforcement: a 'Mech restored as if under Battle/100%; arrives at the landing zone next turn. */
 export function reinforceUnit(c: Campaign, env: RunnerEnv, cuId: string): void {
     const { ms, ct } = mapCtx(c, env);
@@ -232,6 +327,7 @@ export function endMapTurn(c: Campaign, env: RunnerEnv, { designated = 0 } = {})
     if (!ms.ended && R.victory?.zeroSp && c.warchest <= 0) ms.ended = { by: 'sp', winner: 'them', text: 'Your Warchest is at 0 SP.' };
     if (!ms.ended && ct.month >= ct.length) ms.ended = { by: 'turns', winner: '', text: `${ct.length} map turns have passed: the side with the higher Warchest wins.` };
     ms.fought = {};
+    ms.order = null;
     for (const g of ms.groups) g.moved = false;
     for (const e of ms.enemy) e.moved = false;
     ms.groups = ms.groups.filter(g => g.unitIds.length);

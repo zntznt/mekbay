@@ -9,8 +9,8 @@ import { CampaignStorageService, parseCampaignSave, type CampaignSave, type Camp
 import type { Campaign, RunnerEnv, TrackResult } from './core/campaign.model';
 import type { Terms } from './core/engine';
 import {
-    breakSponsor, buyFromSponsor, buySalvage, buyScrapyard, buyUnit, collectDelivery, goToHall, healPilot, hirePilot, joinSponsor, reconfigure,
-    repairUnit, rollPurchaseGate, rollPurchaseTable, scrapyardRoll, sellUnit, trainFormation, trainSca,
+    breakSponsor, buyFromSponsor, buySalvage, buyScrapyard, buyTofttOption, buyUnit, collectDelivery, goToHall, healPilot, hirePilot, hireRecruit, joinSponsor,
+    reconfigure, repairUnit, rollFactionPurchase, rollPurchaseGate, rollPurchaseTable, scrapyardRoll, sellUnit, trainFormation, trainSca,
     type BuyOptions, type DeliveryZone, type HireInput,
 } from './core/market';
 import { investSp } from './core/pilots';
@@ -18,14 +18,15 @@ import { tableRoller } from './core/roller';
 import type { LadderColumn } from './core/rules';
 import { migratePublication, type Publication } from './core/publication.model';
 import {
-    acceptContract, beginMonth, campaignChecks, closeContract, endMonth, evaluateVictory, migrateCampaign, newCampaign, waitMonth,
+    acceptContract, beginMonth, campaignChecks, closeContract, endContractNow, endMonth, evaluateVictory, migrateCampaign, newCampaign, payDebt, waitMonth,
+    type AcceptInput, type NewCampaignInput,
 } from './core/runner';
 import { declineOffer, generateOffer, offerSource, signOffer } from './core/offer';
 import { briefFlow, loopDecision, makeChoice, monthPlan, nextItem, rollRandomNode, type PlanItem } from './core/script';
-import { addDefenders, applyTrack, cancelTrack, rollComplications, startFinalBattle, startTrack, trackForce, withdrawFromBattle } from './core/track';
+import { addDefenders, addTempHire, applyTrack, cancelTrack, rollComplications, startFinalBattle, startTrack, trackForce, withdrawFromBattle } from './core/track';
 import {
-    addEnemy, addGroup, beginMapTurns, editGroup, endMapTurn, landAt, moveEnemy, moveGroup, reinforceUnit, removeEnemy, removeGroup, setEnemyLz,
-    setMapWinner, stayGroup,
+    addEnemy, addGroup, beginMapTurns, chooseMapOrder, deployArrivals, editGroup, endMapTurn, landAt, moveEnemy, moveGroup, reinforceUnit, removeEnemy, removeGroup,
+    rollMapInitiative, setEnemyLz, setMapWinner, stayEnemy, stayGroup,
 } from './core/map-play';
 import type { MapSide } from './core/campaign.model';
 import type { UnitLookup } from './core/units';
@@ -126,12 +127,14 @@ export class CampaignService {
         this.saves.set(await this.storage.list());
     }
 
-    async startCampaign(name: string, system: GameSystem): Promise<boolean> {
+    /** `opts`: background, regular military faction and parent command, when the publication has them. */
+    async startCampaign(name: string, system: GameSystem, opts: Pick<NewCampaignInput, 'backgroundId' | 'factionId' | 'parentId'> = {}): Promise<boolean> {
         const pub = this.pub();
         if (!pub) return this.fail('Import a publication first.');
         if (this.pubErrors().length) return this.fail('Fix the publication errors first.');
         if (!pub.systems.includes(system)) return this.fail('The publication does not support that game system.');
-        this.campaign.set(newCampaign({ pub, name: name.trim() || undefined, system }));
+        if (opts.factionId && !pub.factions.some(f => f.id === opts.factionId)) return this.fail('Faction not found.');
+        this.campaign.set(newCampaign({ pub, name: name.trim() || undefined, system, ...opts }));
         this.error.set('');
         await this.persist();
         return true;
@@ -228,14 +231,26 @@ export class CampaignService {
             if (cu) cu.pilotId = pilotId;
         });
     }
-    generateOffer() { return this.act((c, env) => void generateOffer(c, env)); }
+    generateOffer(inputs: Record<string, string> = {}) { return this.act((c, env) => void generateOffer(c, env, inputs)); }
     declineOffer() { return this.act(c => declineOffer(c)); }
     /** Signing adds the offered contract and its brief to the publication. */
-    signOffer(terms: Terms) { return this.act((c, env) => void signOffer(c, env, terms), true); }
-    signContract(contractId: string, terms: Terms) { return this.act((c, env) => void acceptContract(c, env, { contractId, terms })); }
+    signOffer(terms: Terms, opts: Pick<AcceptInput, 'bring' | 'toftt'> = {}) { return this.act((c, env) => void signOffer(c, env, terms, opts), true); }
+    signContract(contractId: string, terms: Terms, opts: Pick<AcceptInput, 'bring' | 'toftt'> = {}) {
+        return this.act((c, env) => void acceptContract(c, env, { ...opts, contractId, terms }));
+    }
     beginMonth() { return this.act((c, env) => beginMonth(c, env)); }
     endMonth() { return this.act((c, env) => (c.contract ? endMonth(c, env) : waitMonth(c, env))); }
-    closeContract(won: boolean) { return this.act((c, env) => closeContract(c, env, { won })); }
+    /** `tofttBonus`: half-price unit picked after a whole contract of Taking One For the Team tracks ("Chassis Model" accepted). */
+    closeContract(won: boolean, tofttBonus = '') {
+        return this.act((c, env) => {
+            const unit = tofttBonus ? this.resolveUnit(tofttBonus) : '';
+            if (tofttBonus && !unit) throw new Error(`Unknown unit: ${tofttBonus}`);
+            closeContract(c, env, { won, tofttBonus: unit || '' });
+        });
+    }
+    /** A contract end node in the brief was reached. */
+    endContractNow(reason: string) { return this.act(c => endContractNow(c, reason)); }
+    payDebt(amount: number) { return this.act(c => payDebt(c, amount)); }
     rollRandom() {
         return this.act((c, env) => {
             const w = monthPlan(c, env.pub).waiting;
@@ -260,6 +275,22 @@ export class CampaignService {
         });
     }
     setTrackUnits(unitIds: string[]) { return this.act(c => fieldUnits(c, unitIds)); }
+    /** Taking One For the Team: play the opposing force in this track. */
+    setTrackToftt(on: boolean) {
+        return this.act(c => {
+            if (!c.draft || c.draft.mapBattle) throw new Error('Only a contract track can be played for the other side.');
+            c.draft.toftt = on;
+        });
+    }
+    /** Field (or drop) one of the contract's temporary hires in this track. */
+    setTrackHire(hireId: string, on: boolean) {
+        return this.act((c, env) => {
+            const d = c.draft;
+            if (!d) throw new Error('Set up a track first.');
+            if (on) d.hireIds = [...new Set([...d.hireIds, addTempHire(c, env, hireId).id])];
+            else d.hireIds = d.hireIds.filter(id => c.units.find(u => u.id === id)?.tempHire?.hireId !== hireId);
+        });
+    }
     cancelTrack() { return this.act(c => cancelTrack(c)); }
     /** Apply a track result; salvage may name units by "Chassis Model". */
     applyTrack(result: TrackResult) {
@@ -271,7 +302,14 @@ export class CampaignService {
                 if (!unit) throw new Error(`Unknown salvage unit: ${s.unit}`);
                 return { ...s, unit };
             });
-            applyTrack(c, env, { ...result, salvage });
+            const named = (s: string) => {
+                const unit = this.resolveUnit(s);
+                if (!unit) throw new Error(`Unknown unit: ${s}`);
+                return unit;
+            };
+            const tofttUnits = result.tofttUnits?.map(named);
+            const tofttPick = result.tofttPick ? named(result.tofttPick) : undefined;
+            applyTrack(c, env, { ...result, salvage, tofttUnits, tofttPick });
         });
     }
 
@@ -299,6 +337,8 @@ export class CampaignService {
     heal(pilotId: string) { return this.act((c, env) => healPilot(c, env, pilotId)); }
     investSp(pilotId: string, col: LadderColumn, amount: number) { return this.act(c => investSp(c, pilotId, col, amount)); }
     hire(input: HireInput) { return this.act((c, env) => void hirePilot(c, env, input)); }
+    /** Hire a crew through a recruit effect of a held map hex. */
+    hireRecruit(cuId: string, idx: number) { return this.act((c, env) => hireRecruit(c, env, cuId, idx)); }
     trainSca(pilotId: string, name: string) { return this.act((c, env) => trainSca(c, env, pilotId, name)); }
     trainFormation(pilotId: string, formation: string) { return this.act((c, env) => trainFormation(c, env, pilotId, formation)); }
     buySalvage(svId: string) { return this.act(c => void buySalvage(c, svId)); }
@@ -311,6 +351,8 @@ export class CampaignService {
     buyScrapyard(breakDeal = false) { return this.act((c, env) => void buyScrapyard(c, env, { breakDeal })); }
     rollPurchaseGate() { return this.act((c, env) => void rollPurchaseGate(c, env)); }
     rollPurchaseTable() { return this.act((c, env) => void rollPurchaseTable(c, env, tableRoller(env.rng))); }
+    rollFactionPurchase(mod = 0, subMod = 0) { return this.act((c, env) => void rollFactionPurchase(c, env, tableRoller(env.rng), { mod, subMod })); }
+    buyToftt(id: string) { return this.act((c, env) => void buyTofttOption(c, env, id)); }
     /** Join a sponsor; an empty id ends the current sponsorship for good. */
     setSponsor(id: string) { return this.act((c, env) => (id ? joinSponsor(c, env, id) : breakSponsor(c, env, 'ended by the command'))); }
     orderFromSponsor(unit: string, zone: DeliveryZone) { return this.act((c, env) => void buyFromSponsor(c, env, unit, zone)); }
@@ -328,6 +370,11 @@ export class CampaignService {
     /** Move a formation; moving onto the opponent sets up the battle as the current track. */
     moveGroup(gid: string, to: string) { return this.act((c, env) => (moveGroup(c, env, gid, to), splitGranted(c))); }
     stayGroup(gid: string) { return this.act((c, env) => stayGroup(c, env, gid)); }
+    stayEnemy(eid: string) { return this.act((c, env) => stayEnemy(c, env, eid)); }
+    rollMapInitiative() { return this.act((c, env) => void rollMapInitiative(c, env)); }
+    chooseMapOrder(first: MapSide) { return this.act((c, env) => chooseMapOrder(c, env, first)); }
+    /** Units waiting at the landing zone form a new formation there, or join `gid` at the landing zone. */
+    deployArrivals(unitIds: string[], gid = '') { return this.act((c, env) => void deployArrivals(c, env, unitIds, gid)); }
     addEnemy(name: string) { return this.act((c, env) => addEnemy(c, env, name)); }
     moveEnemy(eid: string, to: string) { return this.act((c, env) => (moveEnemy(c, env, eid, to), splitGranted(c))); }
     removeEnemy(eid: string) { return this.act((c, env) => removeEnemy(c, env, eid)); }

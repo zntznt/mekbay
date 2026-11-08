@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { GameSystem } from '../../models/common.model';
-import type { Campaign, EnemyMarker, MapGroup, MapState, RunnerEnv } from './campaign.model';
+import type { Campaign, EnemyMarker, MapGroup, MapSide, MapState, RunnerEnv } from './campaign.model';
 import { roll, type Rng } from './dice';
 import { byId, HEX_DEFAULT, type CampaignMap, type HexType, type MapEffect, type MapEffectKind, type Publication } from './publication.model';
 import { isMovementHeavy, rulesFor } from './rules';
@@ -128,7 +128,7 @@ export function newMapState(map: CampaignMap): MapState {
     return {
         mapId: map.id, phase: 'landing', owner: {}, groups: [], enemy: [], lzHex: '', lzGroup: '', enemyLz: '', lzEffects: [],
         reinforcements: Number(map.rules.reinforcements) || 0, hold: { us: 0, them: 0 }, battles: 0, battle: null, fought: {},
-        ended: null, finalDone: false, notes: [],
+        ended: null, finalDone: false, notes: [], order: null,
     };
 }
 
@@ -192,6 +192,44 @@ export function groupChecks(c: Campaign, env: RunnerEnv): string[] {
     if (pool && sum !== pool) out.push(`Formation BSP total ${sum}; the force has ${pool} to divide.`);
     return out;
 }
+// ---------- map-turn order ----------
+
+export const otherMapSide = (s: MapSide): MapSide => (s === 'us' ? 'them' : 'us');
+/** Formations of one side still to move this map turn. */
+export function unmoved(ms: MapState, side: MapSide): number {
+    return side === 'us' ? ms.groups.filter(g => g.unitIds.length && !g.moved).length : ms.enemy.filter(e => !e.gone && !e.moved).length;
+}
+/**
+ * Whose move it is: sides alternate; while one side has more formations left,
+ * it moves two for one until the counts are even. '' = no order yet, or all moved.
+ */
+export function toMove(ms: MapState): MapSide | '' {
+    const o = ms.order;
+    if (!o?.side) return '';
+    const s = o.side;
+    const t = otherMapSide(s);
+    const rs = unmoved(ms, s);
+    const rt = unmoved(ms, t);
+    if (!rs) return rt ? t : '';
+    if (!rt) return s;
+    const atStart = rs + o.used;
+    const size = atStart > rt ? Math.min(2, atStart - rt) : 1;
+    return o.used < size ? s : t;
+}
+/** Count a move by `side`. `again`: the mover moves next (it attacked a defender that had not moved yet). */
+export function recordMove(ms: MapState, side: MapSide, again = false): void {
+    const o = ms.order;
+    if (!o?.side) return;
+    if (again) {
+        o.side = side;
+        o.used = 0;
+    } else if (o.side === side) o.used++;
+    else {
+        o.side = side;
+        o.used = 1;
+    }
+}
+
 /** Adjacent unoccupied, passable hex closest to a base (for withdrawals). */
 export function withdrawHex(map: CampaignMap, ms: MapState, from: string, base: string): string | null {
     const occupied = (h: string) => !!groupAt(ms, h) || !!enemyAt(ms, h);
