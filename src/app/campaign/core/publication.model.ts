@@ -647,7 +647,27 @@ export function trackRange(nodes: readonly BriefNode[] | undefined): [number, nu
 const isSystem = (x: unknown): x is GameSystem => x === GameSystem.CLASSIC || x === GameSystem.ALPHA_STRIKE;
 
 /** Fill missing collections and defaults on a loaded publication. */
+/**
+ * The old standalone workshop stored unit references as `unitId`; the port calls
+ * them `unit` (same MekBay unit name). Nothing in the new model uses `unitId`, so
+ * rename it wherever it appears. Bounded: imported files can be any shape.
+ */
+function renameLegacyUnitIds(root: unknown): void {
+    const stack: [unknown, number][] = [[root, 0]];
+    for (let seen = 0; stack.length && seen < 200_000; seen++) {
+        const [o, depth] = stack.pop()!;
+        if (!o || typeof o !== 'object' || depth > 32) continue;
+        const rec = o as Record<string, unknown>;
+        if (!Array.isArray(o) && 'unitId' in rec) {
+            if (rec['unit'] == null) rec['unit'] = rec['unitId'];
+            delete rec['unitId'];
+        }
+        for (const v of Object.values(rec)) if (v && typeof v === 'object') stack.push([v, depth + 1]);
+    }
+}
+
 export function migratePublication(pub: Publication): Publication {
+    renameLegacyUnitIds(pub);
     if (!pub.schema) pub.schema = PUBLICATION_SCHEMA;
     for (const c of COLLECTIONS) if (!Array.isArray(pub[c])) (pub[c] as unknown[]) = [];
     pub.systems = (Array.isArray(pub.systems) ? pub.systems : []).filter(isSystem);

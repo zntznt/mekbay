@@ -6,10 +6,10 @@ import {
     bestBasePayTerms, checkNegotiation, combatPay, contractEconomics, handicap, resolveStep, stepLabel, tempHireRoom, trackLimit,
 } from './engine';
 import { newPilot, pilotStats } from './pilots';
-import { defaultTerms } from './publication.model';
+import { defaultTerms, migratePublication } from './publication.model';
 import { ALPHA_STRIKE_RULES, CLASSIC_RULES, RULES, rulesFor } from './rules';
 import { crewCheck, destroyedSalvageCheck } from './track';
-import { lookup } from './testing/fixtures';
+import { lookup, makePublication } from './testing/fixtures';
 
 const u = (name: string) => lookup(name)!;
 
@@ -168,5 +168,15 @@ describe('imported-data guards', () => {
     it('resolves a non-numeric step without hanging', () => {
         expect(resolveStep('basePay', NaN)).toBe(7);
         expect(resolveStep('basePay', 3.6)).toBe(resolveStep('basePay', 3));
+    });
+});
+
+describe('workshop publication migration', () => {
+    it('renames legacy unitId to unit', () => {
+        const pub = makePublication() as unknown as Record<string, unknown>;
+        (pub['pilots'] as unknown[]) = [{ id: 'np_x', name: 'X', unitId: 'BMLocust_LCT1V' }];
+        const out = migratePublication(pub as never);
+        expect((out.pilots[0] as unknown as Record<string, unknown>)['unit']).toBe('BMLocust_LCT1V');
+        expect('unitId' in (out.pilots[0] as object)).toBeFalse();
     });
 });
