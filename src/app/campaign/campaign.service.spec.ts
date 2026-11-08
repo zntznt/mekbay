@@ -8,7 +8,8 @@ import { DataService } from '../services/data.service';
 import { ForceBuilderService } from '../services/force-builder.service';
 import { CampaignService } from './campaign.service';
 import { CampaignStorageService, type CampaignSave } from './campaign-storage.service';
-import { lookup, makePublication, UNITS } from './core/testing/fixtures';
+import { lookup, makeMap, makeMapPublication, makePublication, UNITS } from './core/testing/fixtures';
+import { paintHex, starterMap } from './core/map-edit';
 
 const RAISED = { basePay: 8, support: 8, transport: 7, salvage: 7, command: 7 };
 
@@ -28,6 +29,10 @@ describe('CampaignService', () => {
             load: async (id: string) => saved.get(id) ?? null,
             list: async () => [...saved.values()].map(r => ({ id: r.campaign.id, name: r.campaign.name, pubTitle: r.pub.title, date: r.campaign.date, savedAt: '' })),
             remove: async (id: string) => void saved.delete(id),
+            all: async () => [...saved.values()],
+            put: async (rec: CampaignSave) => void saved.set(rec.campaign.id, rec),
+            saveDraft: async () => {},
+            loadDraft: async () => null,
         };
         createGeneratedForce = jasmine.createSpy('createGeneratedForce').and.resolveTo({});
         TestBed.configureTestingModule({
@@ -52,6 +57,28 @@ describe('CampaignService', () => {
         await svc.assignPilot(c.units[1].id, c.pilots[1].id);
         return svc.campaign()!;
     }
+
+    it('saves an edited map into the publication and saved campaigns not playing it, refusing map errors', async () => {
+        expect(await svc.saveMap({ ...starterMap(), hexes: { '0101': { t: 'hx_gone' } } })).toBeNull();
+        expect(svc.pub()).toBeNull();
+        const fresh = paintHex(starterMap(), '0202', 'hx_water');
+        expect(await svc.saveMap(fresh, true)).toEqual({ updated: 0, kept: 0 });
+        expect(svc.pub()!.maps[0].hexes['0202'].t).toBe('hx_water');
+        expect(svc.pub()!.contracts[0].mapId).toBe(fresh.id);
+
+        expect(svc.importPublication(JSON.stringify(makeMapPublication()))).toBeTrue();
+        expect(await svc.startCampaign('Waiting', GameSystem.CLASSIC)).toBeTrue();
+        const waiting = svc.campaign()!.id;
+        expect(await svc.startCampaign('On the map', GameSystem.CLASSIC)).toBeTrue();
+        const playing = saved.get(svc.campaign()!.id)!;
+        playing.campaign.contract = { map: { mapId: 'mp_atoll' } } as never;
+        svc.close();
+        const edited = { ...makeMap(), name: 'Edited Atoll' };
+        expect(await svc.saveMap(edited)).toEqual({ updated: 1, kept: 1 });
+        expect(svc.pub()!.maps[0].name).toBe('Edited Atoll');
+        expect(saved.get(waiting)!.pub.maps[0].name).toBe('Edited Atoll');
+        expect(playing.pub.maps[0].name).toBe('Test Atoll');
+    });
 
     it('validates an imported publication and rejects junk', () => {
         expect(svc.importPublication('{nope')).toBeFalse();

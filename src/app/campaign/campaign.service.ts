@@ -16,7 +16,8 @@ import {
 import { investSp } from './core/pilots';
 import { tableRoller } from './core/roller';
 import type { LadderColumn } from './core/rules';
-import { migratePublication, type Publication } from './core/publication.model';
+import { migratePublication, newPublication, type CampaignMap, type Publication } from './core/publication.model';
+import { withMap, withMapContract } from './core/map-edit';
 import {
     acceptContract, beginMonth, campaignChecks, closeContract, endContractNow, endMonth, evaluateVictory, migrateCampaign, newCampaign, payDebt, waitMonth,
     type AcceptInput, type NewCampaignInput,
@@ -114,6 +115,7 @@ export class CampaignService {
             this.pub.set(pub);
             this.issues.set(validate(pub, this.units));
             this.error.set('');
+            void this.storage.saveDraft(pub);
             return true;
         } catch (e) {
             this.error.set(`Not a publication file: ${(e as Error).message}`);
@@ -121,10 +123,54 @@ export class CampaignService {
         }
     }
 
+    /**
+     * Save an edited map into the page's publication (a new publication when none
+     * is loaded); refused while the map has errors. Saved campaigns on the same
+     * publication get the map (and the contracts that play on it) for their next
+     * load, except campaigns with a contract on this map: they keep the map they
+     * started with, so their map state never points at hexes that changed.
+     */
+    async saveMap(map: CampaignMap, addContract = false): Promise<{ updated: number; kept: number } | null> {
+        let pub = withMap(this.pub() ?? newPublication(), map);
+        if (addContract) pub = withMapContract(pub, map);
+        const issues = validate(pub, this.units);
+        if (issues.some(i => i.level === 'error' && i.coll === 'maps' && i.id === map.id)) {
+            this.fail('Fix the map errors before saving.');
+            return null;
+        }
+        this.pub.set(pub);
+        this.issues.set(issues);
+        this.error.set('');
+        await this.storage.saveDraft(pub);
+        let updated = 0;
+        let kept = 0;
+        for (const rec of await this.storage.all()) {
+            if (rec.pub?.id !== pub.id) continue;
+            if (rec.campaign.contract?.map?.mapId === map.id) {
+                kept++;
+                continue;
+            }
+            let p = withMap(migratePublication(rec.pub), map);
+            const missing = pub.contracts.filter(c => c.mapId === map.id && !p.contracts.some(x => x.id === c.id));
+            if (missing.length) p = { ...p, contracts: [...p.contracts, ...missing] };
+            await this.storage.put({ ...rec, pub: p });
+            updated++;
+        }
+        return { updated, kept };
+    }
+
     // ---------- campaigns ----------
 
     async refreshSaves(): Promise<void> {
         this.saves.set(await this.storage.list());
+        if (!this.pub()) {
+            const draft = await this.storage.loadDraft();
+            if (draft && !this.pub()) {
+                const pub = migratePublication(draft);
+                this.pub.set(pub);
+                this.issues.set(validate(pub, this.units));
+            }
+        }
     }
 
     /** `opts`: background, regular military faction and parent command, when the publication has them. */

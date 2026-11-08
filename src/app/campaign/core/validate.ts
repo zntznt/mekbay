@@ -10,7 +10,7 @@ import {
 import { rulesFor } from './rules';
 import { REPAIR_TIME } from './runner';
 import { unitGroup, type UnitLookup } from './units';
-import { inMap, MAX_MAP_SIDE } from './hex-map';
+import { inMap, MAP_RULE_RANGES, MAX_MAP_SIDE, type MapRuleNum } from './hex-map';
 
 export interface Issue {
     level: 'error' | 'warn' | 'info';
@@ -444,11 +444,7 @@ export function validate(pub: Publication, units: UnitLookup | null = null): Iss
         const sideOk = (n: unknown) => Number.isInteger(n) && (n as number) >= 1 && (n as number) <= MAX_MAP_SIDE;
         if (!sideOk(m.cols) || !sideOk(m.rows)) add('error', 'maps', m.id, `Map size must be 1–${MAX_MAP_SIDE} columns and rows.`);
         const R = m.rules;
-        const ruleNums: [keyof typeof R, number, number][] = [
-            ['turns', 1, 100], ['turnsPerMonth', 1, 12], ['maxGroups', 1, 20], ['groupSize', 1, 50], ['minMechs', 0, 50],
-            ['lightMove', 0, MAX_MAP_SIDE], ['heavyMove', 0, MAX_MAP_SIDE], ['reinforcements', 0, 100], ['bspPerScale', 0, 10000],
-        ];
-        for (const [k, lo, hi] of ruleNums) {
+        for (const [k, [lo, hi]] of Object.entries(MAP_RULE_RANGES) as [MapRuleNum, readonly [number, number]][]) {
             const v = R[k];
             if (!Number.isInteger(v) || (v as number) < lo || (v as number) > hi) add('error', 'maps', m.id, `Map rule ${k} must be a whole number ${lo}–${hi}.`);
         }

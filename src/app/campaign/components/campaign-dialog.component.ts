@@ -10,13 +10,15 @@ import { DAMAGE_LABEL, isGone, type TrackResult } from '../core/campaign.model';
 import { sellQuote } from '../core/market';
 import { basePay, ECON, pct, selectableSteps, stepLabel, TERMS, TERM_LABEL, transportCost, type TermKey, type Terms } from '../core/engine';
 import { offerSource, playerInputs } from '../core/offer';
-import { byId } from '../core/publication.model';
+import { byId, type CampaignMap } from '../core/publication.model';
+import { starterMap } from '../core/map-edit';
 import { monthPlan, nextItem, type PlanItem } from '../core/script';
 import { availableContracts, contractLimitCheck, fmt, negotiationCheck, ownUnits, period, regularTermOptions } from '../core/runner';
 import { hexName, hexType, mapOf } from '../core/hex-map';
 import { contractHires, trackEventTables, unitAvailable } from '../core/track';
 import { BriefFlowComponent } from './brief-flow.component';
 import { CampaignStatusComponent } from './campaign-status.component';
+import { downloadText, MapEditorComponent } from './map-editor.component';
 import { MapPanelComponent } from './map-panel.component';
 import { MarketPanelComponent } from './market-panel.component';
 import { PilotsPanelComponent } from './pilots-panel.component';
@@ -30,7 +32,7 @@ const SYSTEM_LABEL: Record<GameSystem, string> = { [GameSystem.CLASSIC]: 'Classi
 @Component({
     selector: 'campaign-dialog',
     changeDetection: ChangeDetectionStrategy.OnPush,
-    imports: [NgTemplateOutlet, BriefFlowComponent, CampaignStatusComponent, MapPanelComponent, MarketPanelComponent, PilotsPanelComponent, RepairsPanelComponent, SalvagePanelComponent, TrackResultFormComponent],
+    imports: [NgTemplateOutlet, BriefFlowComponent, CampaignStatusComponent, MapEditorComponent, MapPanelComponent, MarketPanelComponent, PilotsPanelComponent, RepairsPanelComponent, SalvagePanelComponent, TrackResultFormComponent],
     host: { class: 'fullscreen-dialog-host nopadding fullheight tv-fade' },
     templateUrl: './campaign-dialog.component.html',
     styleUrls: ['./campaign.shared.scss', './campaign-dialog.component.scss'],
@@ -202,14 +204,20 @@ export class CampaignDialogComponent {
         const c = this.svc.campaign();
         const json = this.svc.exportSave();
         if (!c || !json) return;
-        const url = URL.createObjectURL(new Blob([json], { type: 'application/json;charset=utf-8' }));
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${c.name.replace(/[^\w-]+/g, '_') || 'campaign'}.campaign.json`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 0);
+        downloadText(`${c.name.replace(/[^\w-]+/g, '_') || 'campaign'}.campaign.json`, json);
+    }
+
+    // ---------- map editor ----------
+
+    /** The map open in the editor (from the page's publication, or a new one). */
+    protected readonly editingMap = signal<CampaignMap | null>(null);
+    protected newMap(): void {
+        this.editingMap.set(starterMap());
+    }
+    protected closeEditor(): void {
+        this.editingMap.set(null);
+        const pub = this.svc.pub();
+        if (pub && !this.system()) this.system.set(pub.systems[0]);
     }
 
     // ---------- actions ----------

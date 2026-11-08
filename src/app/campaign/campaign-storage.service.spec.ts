@@ -37,6 +37,12 @@ describe('CampaignStorageService', () => {
         expect(dbs.some(d => d.name === 'mekbay-campaign')).toBeTrue();
     });
 
+    it('keeps the working publication as a draft across reloads', async () => {
+        const pub = makePublication();
+        await storage.saveDraft(pub);
+        expect((await storage.loadDraft())!.title).toBe('Test publication');
+    });
+
     it('parses only campaign save files', () => {
         const pub = makePublication();
         const c = newCampaign({ pub });

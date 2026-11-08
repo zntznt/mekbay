@@ -22,11 +22,12 @@ export interface HexMarker {
             <button type="button" class="bt-button tiny" (click)="zoom(6)" aria-label="Zoom in">+</button>
         </div>
         <div class="hm-scroll">
-            <svg [attr.viewBox]="'0 0 ' + px().w + ' ' + px().h" [attr.width]="px().w" [attr.height]="px().h" role="group" aria-label="Campaign map">
+            <svg [attr.viewBox]="'0 0 ' + px().w + ' ' + px().h" [attr.width]="px().w" [attr.height]="px().h" role="group" aria-label="Campaign map"
+                [class.hm-painting]="paint()" (pointerdown)="down($event)" (pointermove)="move($event)" (pointerup)="up()" (pointercancel)="up()" (lostpointercapture)="up()">
                 @if (image()) { <image [attr.href]="image()" x="0" y="0" [attr.width]="px().w" [attr.height]="px().h" preserveAspectRatio="none" opacity="0.5" /> }
                 @for (h of cells(); track h.id) {
                     <g class="hm-hex" [class.hm-imp]="h.impassable" [class.hm-reach]="h.steps != null" [class.hm-sel]="h.id === selected()"
-                        role="button" [attr.aria-label]="h.id + ' ' + h.title" (click)="hexTap.emit(h.id)">
+                        role="button" [attr.data-hex]="h.id" [attr.aria-label]="h.id + ' ' + h.title" (click)="hexTap.emit(h.id)">
                         <title>{{ h.id }} {{ h.title }}</title>
                         <polygon [attr.points]="h.points" [attr.fill]="h.color" [attr.fill-opacity]="image() ? 0.55 : 0.9"
                             [attr.stroke]="h.owner === 'us' ? '#3d8bfd' : h.owner === 'them' ? '#e5534b' : '#5c574d'" [attr.stroke-width]="h.owner ? 3 : 0.8" />
@@ -51,6 +52,7 @@ export interface HexMarker {
         .hm-tools .bt-button { min-width: 40px; min-height: 36px; font-size: 1.2em; }
         .hm-scroll { overflow: auto; max-height: 70vh; touch-action: pan-x pan-y; border: 1px solid var(--border-color); }
         svg { display: block; user-select: none; }
+        svg.hm-painting { touch-action: none; }
         .hm-hex { cursor: pointer; }
         .hm-imp { cursor: not-allowed; }
         .hm-reach polygon { stroke: #f5c518; stroke-width: 3; }
@@ -76,6 +78,34 @@ export class HexMapComponent {
     /** Landing-zone and enemy-HQ hexes, labelled on the map. */
     readonly lz = input<{ us: string; them: string }>({ us: '', them: '' });
     readonly hexTap = output<string>();
+    /** Paint mode: pressing and dragging over hexes emits each hex once per stroke (`start` on the first). Touch drags paint instead of scrolling. */
+    readonly paint = input(false);
+    readonly hexPaint = output<{ hex: string; start: boolean }>();
+
+    private stroke: Set<string> | null = null;
+    private hexUnder(e: PointerEvent): string {
+        const el = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-hex]');
+        return el?.getAttribute('data-hex') || '';
+    }
+    protected down(e: PointerEvent): void {
+        if (!this.paint() || e.button > 0) return;
+        const hex = this.hexUnder(e);
+        if (!hex) return;
+        e.preventDefault();
+        this.stroke = new Set([hex]);
+        this.hexPaint.emit({ hex, start: true });
+    }
+    protected move(e: PointerEvent): void {
+        if (!this.stroke) return;
+        if (!e.buttons) return this.up(); // released outside the map
+        const hex = this.hexUnder(e);
+        if (!hex || this.stroke.has(hex)) return;
+        this.stroke.add(hex);
+        this.hexPaint.emit({ hex, start: false });
+    }
+    protected up(): void {
+        this.stroke = null;
+    }
 
     protected readonly size = signal(30);
     protected zoom(d: number): void {
@@ -95,7 +125,8 @@ export class HexMapComponent {
         return allHexes(map).map(id => {
             const t = hexType(map, id);
             const { x, y } = hexCenter(id, size);
-            const badge = t.hq || t.lz ? 'LZ' : t.strategic ? '★' : t.income ? `${t.income}` : '';
+            const end = map.hexes[id]?.end;
+            const badge = t.hq || t.lz ? (end ? `LZ ${end}` : 'LZ') : t.strategic ? '★' : t.income ? `${t.income}` : '';
             return { id, x, y, points: hexPoints(x, y, size - 0.8), color: t.color || '#ccc', impassable: t.impassable, name: hexName(map, id), title: t.name, badge };
         });
     });

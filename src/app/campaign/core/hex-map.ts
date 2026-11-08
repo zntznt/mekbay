@@ -33,6 +33,12 @@ export function hexDist(a: string, b: string): number {
 }
 /** Hex ids have two digits per axis, so a side is 1–99 hexes; imported sizes are clamped to that. */
 export const MAX_MAP_SIDE = 99;
+/** Whole-number ranges for the numeric map rules; validation and the map editor share them. */
+export const MAP_RULE_RANGES = {
+    turns: [1, 100], turnsPerMonth: [1, 12], maxGroups: [1, 20], groupSize: [1, 50], minMechs: [0, 50],
+    lightTons: [0, 200], lightSz: [0, 10], lightMove: [0, MAX_MAP_SIDE], heavyMove: [0, MAX_MAP_SIDE], reinforcements: [0, 100], bspPerScale: [0, 10000],
+} as const satisfies Partial<Record<keyof CampaignMap['rules'], readonly [number, number]>>;
+export type MapRuleNum = keyof typeof MAP_RULE_RANGES;
 const side = (n: unknown): number => Math.min(MAX_MAP_SIDE, Math.max(1, Math.floor(Number(n)) || 1));
 export function inMap(map: Pick<CampaignMap, 'cols' | 'rows'>, id: string): boolean {
     const { col, row } = parseHex(id);

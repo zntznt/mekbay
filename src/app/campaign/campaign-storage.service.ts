@@ -10,8 +10,10 @@ import type { Publication } from './core/publication.model';
  */
 
 const DB_NAME = 'mekbay-campaign';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = 'campaigns';
+/** The publication being imported/edited on the start screen, so map edits survive a reload. */
+const DRAFT = 'draft';
 
 /** A campaign with the publication it runs on: everything needed to resume it. */
 export interface CampaignSave {
@@ -47,6 +49,7 @@ export class CampaignStorageService {
             const req = indexedDB.open(DB_NAME, DB_VERSION);
             req.onupgradeneeded = () => {
                 if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE);
+                if (!req.result.objectStoreNames.contains(DRAFT)) req.result.createObjectStore(DRAFT);
             };
             req.onsuccess = () => resolve(req.result);
             req.onerror = () => resolve(null);
@@ -54,12 +57,12 @@ export class CampaignStorageService {
         return this.dbPromise;
     }
 
-    private async run<T>(mode: IDBTransactionMode, op: (s: IDBObjectStore) => IDBRequest<T>): Promise<T | null> {
+    private async run<T>(mode: IDBTransactionMode, op: (s: IDBObjectStore) => IDBRequest<T>, store = STORE): Promise<T | null> {
         const db = await this.db();
         if (!db) return null;
         return new Promise((resolve, reject) => {
-            const tx = db.transaction(STORE, mode);
-            const req = op(tx.objectStore(STORE));
+            const tx = db.transaction(store, mode);
+            const req = op(tx.objectStore(store));
             tx.oncomplete = () => resolve(req.result ?? null);
             tx.onerror = () => reject(tx.error);
         });
@@ -75,11 +78,28 @@ export class CampaignStorageService {
         return this.run<CampaignSave | undefined>('readonly', s => s.get(id)).then(x => x ?? null);
     }
 
+    /** Every stored save, whole. */
+    async all(): Promise<CampaignSave[]> {
+        return (await this.run<CampaignSave[]>('readonly', s => s.getAll())) ?? [];
+    }
+
+    async put(rec: CampaignSave): Promise<void> {
+        await this.run('readwrite', s => s.put(rec, rec.campaign.id));
+    }
+
     async list(): Promise<CampaignSummary[]> {
         const all = (await this.run<CampaignSave[]>('readonly', s => s.getAll())) ?? [];
         return all
             .map(r => ({ id: r.campaign.id, name: r.campaign.name, pubTitle: r.pub.title, date: r.campaign.date, savedAt: r.savedAt }))
             .sort((a, b) => b.savedAt.localeCompare(a.savedAt));
+    }
+
+    async saveDraft(pub: Publication): Promise<void> {
+        await this.run('readwrite', s => s.put(pub, 'pub'), DRAFT);
+    }
+
+    loadDraft(): Promise<Publication | null> {
+        return this.run<Publication | undefined>('readonly', s => s.get('pub'), DRAFT).then(x => x ?? null);
     }
 
     async remove(id: string): Promise<void> {

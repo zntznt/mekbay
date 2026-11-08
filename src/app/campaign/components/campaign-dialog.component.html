@@ -18,7 +18,9 @@
     @if (svc.error()) { <div class="cp-card cp-danger cp-error" role="alert">{{ svc.error() }}</div> }
 
     <div class="cp-body">
-        @if (svc.campaign(); as c) {
+        @if (editingMap(); as m) {
+            <map-editor [map]="m" (closed)="closeEditor()" />
+        } @else if (svc.campaign(); as c) {
             <div class="cp-columns">
                 <div class="cp-main">
                     @if (svc.checks().length) {
@@ -361,6 +363,10 @@
                 <label class="cp-block">Publication (JSON)
                     <input type="file" accept=".json,application/json" (change)="onPublicationFile($event)">
                 </label>
+                <div class="cp-row">
+                    @for (m of svc.pub()?.maps ?? []; track m.id) { <button type="button" class="bt-button tiny" (click)="editingMap.set(m)">Edit map: {{ m.name }}</button> }
+                    <button type="button" class="bt-button tiny" (click)="newMap()">New map</button>
+                </div>
                 @if (svc.pub(); as pub) {
                     <p>{{ pub.title }} <small class="cp-muted">{{ pub.contracts.length }} contracts · {{ pub.calendar.start }} to {{ pub.calendar.end }}</small></p>
                     @if (svc.issues().length) {
