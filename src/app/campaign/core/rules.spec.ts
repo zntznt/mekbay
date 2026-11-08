@@ -179,4 +179,12 @@ describe('workshop publication migration', () => {
         expect((out.pilots[0] as unknown as Record<string, unknown>)['unit']).toBe('BMLocust_LCT1V');
         expect('unitId' in (out.pilots[0] as object)).toBeFalse();
     });
+    it('renames legacy UnitRef id to unit', () => {
+        const pub = makePublication();
+        const t = { ...pub.tables[0] ?? {}, id: 'tb_legacy', rows: [{ min: 1, max: 6, cells: { r: { kind: 'units', units: [{ id: 'BMLocust_LCT1V', qty: 1 }] } } }] };
+        (pub.tables as unknown[]).push(t);
+        const out = migratePublication(pub);
+        const cell = out.tables.find(x => x.id === 'tb_legacy')!.rows[0].cells['r'] as unknown as { units: Record<string, unknown>[] };
+        expect(cell.units[0]['unit']).toBe('BMLocust_LCT1V');
+    });
 });

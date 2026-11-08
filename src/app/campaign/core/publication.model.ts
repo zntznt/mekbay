@@ -648,9 +648,9 @@ const isSystem = (x: unknown): x is GameSystem => x === GameSystem.CLASSIC || x 
 
 /** Fill missing collections and defaults on a loaded publication. */
 /**
- * The old standalone workshop stored unit references as `unitId`; the port calls
- * them `unit` (same MekBay unit name). Nothing in the new model uses `unitId`, so
- * rename it wherever it appears. Bounded: imported files can be any shape.
+ * The old standalone workshop stored unit references as `unitId` (pilots, temp
+ * hires) or as `id` inside `units` lists (UnitRef); the port calls both `unit`
+ * (same MekBay unit name). Bounded: imported files can be any shape.
  */
 function renameLegacyUnitIds(root: unknown): void {
     const stack: [unknown, number][] = [[root, 0]];
@@ -661,6 +661,13 @@ function renameLegacyUnitIds(root: unknown): void {
         if (!Array.isArray(o) && 'unitId' in rec) {
             if (rec['unit'] == null) rec['unit'] = rec['unitId'];
             delete rec['unitId'];
+        }
+        const list = rec['units'];
+        if (Array.isArray(list)) for (const r of list as Record<string, unknown>[]) {
+            if (r && typeof r === 'object' && typeof r['id'] === 'string' && r['unit'] == null) {
+                r['unit'] = r['id'];
+                delete r['id'];
+            }
         }
         for (const v of Object.values(rec)) if (v && typeof v === 'object') stack.push([v, depth + 1]);
     }
